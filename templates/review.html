@@ -1,0 +1,1177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能报告审核 - 硬件研发部测试报告审核平台</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- 顶部导航 -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <a href="/" class="logo">
+                    <img src="/static/images/logo.jpg" alt="Logo" class="logo-img">
+                    <span class="logo-text">硬件研发部测试报告审核平台</span>
+                </a>
+                <nav class="nav">
+                    <a href="/" class="nav-link">首页</a>
+                    <a href="/review" class="nav-link active">智能审核</a>
+                    <a href="/analysis" class="nav-link">智能分析</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主内容 -->
+    <main class="main-content">
+        <div class="container">
+            <!-- 页面标题 -->
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h1 class="card-title">智能报告审核与校验系统</h1>
+                        <p class="card-subtitle">上传测试报告，自动进行多维度校验</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 上传区域 -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">上传测试报告</h3>
+                </div>
+
+                <div id="uploadArea" class="file-upload" onclick="document.getElementById('fileInput').click()">
+                    <svg class="file-upload-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                    <p class="file-upload-text">点击或拖拽上传 Excel 文件</p>
+                    <p class="file-upload-hint">支持 .xlsx 和 .xls 格式，单个文件最大 100MB</p>
+                </div>
+                <input type="file" id="fileInput" class="file-input" accept=".xlsx,.xls" onchange="handleFileSelect(event)">
+
+                <div id="selectedFile" class="hidden" style="margin-top: 16px; padding: 16px; background: var(--bg-color); border-radius: var(--radius-md);">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <strong id="fileName"></strong>
+                            <span id="fileSize" style="color: var(--text-secondary); margin-left: 8px;"></span>
+                        </div>
+                        <button class="btn btn-primary" onclick="startReview()" id="uploadBtn">
+                            开始审核
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 审核进度 -->
+            <div id="progressArea" class="card hidden">
+                <div class="card-header">
+                    <h3 class="card-title">审核进度</h3>
+                </div>
+                <div class="progress-step-container">
+                    <!-- 步骤1: 文件解析 -->
+                    <div class="progress-step" id="step1">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">1</span>
+                            <div class="step-line"></div>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">文件解析</div>
+                            <div class="progress-step-desc" id="step1Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step1Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 步骤2: 项目基础信息 -->
+                    <div class="progress-step" id="step2">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">2</span>
+                            <div class="step-line"></div>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">项目基础信息提取</div>
+                            <div class="progress-step-desc" id="step2Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step2Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 步骤3: 日期校验 -->
+                    <div class="progress-step" id="step3">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">3</span>
+                            <div class="step-line"></div>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">日期合法性校验</div>
+                            <div class="progress-step-desc" id="step3Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step3Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 步骤4: 关键信息一致性校验 -->
+                    <div class="progress-step" id="step4">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">4</span>
+                            <div class="step-line"></div>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">关键信息一致性校验</div>
+                            <div class="progress-step-desc" id="step4Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step4Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 步骤5: 公司信息一致性校验 -->
+                    <div class="progress-step" id="step5">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">5</span>
+                            <div class="step-line"></div>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">公司信息一致性校验</div>
+                            <div class="progress-step-desc" id="step5Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step5Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 步骤6: 测试值逻辑校验 -->
+                    <div class="progress-step" id="step6">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">6</span>
+                            <div class="step-line"></div>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">测试值与判定逻辑校验</div>
+                            <div class="progress-step-desc" id="step6Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step6Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 步骤7: 测试完整性校验 -->
+                    <div class="progress-step" id="step7">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">7</span>
+                            <div class="step-line"></div>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">测试完整性校验</div>
+                            <div class="progress-step-desc" id="step7Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step7Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 步骤8: AI错别字检查 -->
+                    <div class="progress-step" id="step8">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">8</span>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">AI 错别字检查</div>
+                            <div class="progress-step-desc" id="step8Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step8Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 总体进度 -->
+                <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-color);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 14px; font-weight: 500;">总体进度</span>
+                        <span id="progressPercent" style="font-size: 14px; color: var(--primary-color);">0%</span>
+                    </div>
+                    <div class="progress">
+                        <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+                    </div>
+                    <p class="progress-text" id="progressText">等待中...</p>
+                </div>
+            </div>
+
+            <!-- 审核结果 -->
+            <div id="resultArea" class="card hidden">
+                <div class="card-header">
+                    <h3 class="card-title">审核结果</h3>
+                    <button class="btn btn-secondary btn-sm" onclick="exportReport()">
+                        导出报告
+                    </button>
+                </div>
+
+                <!-- 【新增功能】项目基础信息展示 -->
+                <div id="projectInfoSection" class="hidden" style="margin-bottom: 20px;">
+                    <h4 style="margin-bottom: 12px; color: var(--primary-color);">📋 项目基础信息</h4>
+                    <div id="projectInfoContent"></div>
+                </div>
+
+                <!-- 结果摘要 -->
+                <div class="stats-grid" id="resultSummary">
+                </div>
+
+                <!-- 详细结果 -->
+                <div id="resultDetails">
+                    <!-- 日期校验 -->
+                    <div class="result-section">
+                        <h4 style="margin-bottom: 12px;">日期合法性校验</h4>
+                        <div id="dateValidation"></div>
+                    </div>
+
+                    <!-- 一致性校验 -->
+                    <div class="result-section">
+                        <h4 style="margin-bottom: 12px;">关键信息一致性校验</h4>
+                        <div id="consistencyValidation"></div>
+                    </div>
+
+                    <!-- 逻辑校验 -->
+                    <div class="result-section">
+                        <h4 style="margin-bottom: 12px;">测试值与判定逻辑校验</h4>
+                        <div id="logicValidation"></div>
+                    </div>
+
+                    <!-- 完整性校验 -->
+                    <div class="result-section">
+                        <h4 style="margin-bottom: 12px;">测试项目完整性校验</h4>
+                        <div id="completenessValidation"></div>
+                    </div>
+
+                    <!-- AI 检查 -->
+                    <div class="result-section">
+                        <h4 style="margin-bottom: 12px;">AI 错别字检查</h4>
+                        <div id="aiValidation"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 页脚 -->
+    <footer style="background: var(--bg-card); border-top: 1px solid var(--border-color); padding: 20px 0; margin-top: 40px;">
+        <div class="container text-center">
+            <p style="color: var(--text-secondary); font-size: 13px;">
+                硬件研发部测试报告审核平台 v1.0.0
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        console.log('[Review] 页面JavaScript开始加载...');
+
+        // 全局变量
+        let selectedFile = null;
+        let currentTaskId = null;
+        let pollingInterval = null;
+
+        // 页面加载完成后立即执行
+        window.addEventListener('load', function() {
+            console.log('[Review] 页面加载完成');
+            console.log('[Review] 检查关键元素...');
+
+            console.log('[Review] progressArea:', document.getElementById('progressArea') ? '存在' : '不存在');
+            console.log('[Review] progressBar:', document.getElementById('progressBar') ? '存在' : '不存在');
+            console.log('[Review] uploadBtn:', document.getElementById('uploadBtn') ? '存在' : '不存在');
+        });
+
+
+
+        // 处理文件选择
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            selectedFile = file;
+
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = formatFileSize(file.size);
+            document.getElementById('selectedFile').classList.remove('hidden');
+        }
+
+        // 格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        // 开始审核
+        async function startReview() {
+            if (!selectedFile) {
+                console.error('[审核] 未选择文件');
+                return;
+            }
+
+            console.log('[审核] 开始上传文件:', selectedFile.name);
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            // 显示进度区域
+            const progressArea = document.getElementById('progressArea');
+            const selectedFileDiv = document.getElementById('selectedFile');
+            const uploadBtn = document.getElementById('uploadBtn');
+
+            console.log('[审核] 尝试显示进度区域...');
+            console.log('[审核] progressArea.classList before:', progressArea ? progressArea.classList.toString() : 'null');
+
+            if (progressArea) {
+                progressArea.classList.remove('hidden');
+                console.log('[审核] progressArea.classList after:', progressArea.classList.toString());
+                console.log('[审核] progressArea.style.display:', progressArea.style.display);
+                console.log('[审核] 进度区域应该已显示');
+            } else {
+                console.error('[审核] 找不到进度区域元素');
+            }
+
+            if (selectedFileDiv) selectedFileDiv.classList.add('hidden');
+            if (uploadBtn) uploadBtn.disabled = true;
+
+            try {
+                console.log('[审核] 正在上传文件...');
+                // 上传文件
+                const response = await fetch('/api/v1/review/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                console.log('[审核] 上传响应状态:', response.status);
+
+                const data = await response.json();
+                console.log('[审核] 上传响应数据:', data);
+
+                if (!response.ok) {
+                    throw new Error(data.detail || '上传失败');
+                }
+
+                currentTaskId = data.task_id;
+                console.log('[审核] 获取到任务ID:', currentTaskId);
+
+                // 开始轮询
+                console.log('[审核] 准备启动轮询...');
+                startPolling();
+                console.log('[审核] 轮询已启动');
+
+            } catch (error) {
+                console.error('[审核] 上传失败:', error);
+                alert('上传失败: ' + error.message);
+                resetUpload();
+            }
+        }
+
+        // 开始轮询
+        function startPolling() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+
+            console.log('[轮询] 开始轮询任务:', currentTaskId, '时间:', new Date().toISOString());
+
+            // 立即请求一次状态，不要等1秒
+            (async () => {
+                try {
+                    console.log('[轮询] 立即请求第一次状态');
+                    const response = await fetch(`/api/v1/review/status/${currentTaskId}`);
+                    const data = await response.json();
+                    console.log('[轮询] 第一次状态:', data.status, '进度:', data.progress, '消息:', data.message);
+                    updateProgress(data.progress, data.message);
+                    
+                    if (data.status === 'completed') {
+                        console.log('[轮询] 任务第一次就完成了!');
+                        showResult();
+                        return;
+                    } else if (data.status === 'error') {
+                        console.error('[轮询] 任务第一次就失败了:', data.message);
+                        alert('审核失败: ' + data.message);
+                        resetUpload();
+                        return;
+                    }
+                } catch (error) {
+                    console.error('[轮询] 第一次请求失败:', error);
+                }
+            })();
+
+            pollingInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/v1/review/status/${currentTaskId}`);
+
+                    if (!response.ok) {
+                        console.error('[轮询] 请求失败:', response.status);
+                        return;
+                    }
+
+                    const data = await response.json();
+                    console.log('[轮询] 获取状态:', data.status, '进度:', data.progress, '消息:', data.message, '时间:', new Date().toISOString());
+
+                    updateProgress(data.progress, data.message);
+
+                    if (data.status === 'completed') {
+                        console.log('[轮询] 任务完成!');
+                        clearInterval(pollingInterval);
+                        showResult();
+                    } else if (data.status === 'error') {
+                        console.error('[轮询] 任务失败:', data.message);
+                        clearInterval(pollingInterval);
+                        alert('审核失败: ' + data.message);
+                        resetUpload();
+                    }
+                } catch (error) {
+                    console.error('[轮询] 轮询失败:', error);
+                }
+            }, 1000);
+        }
+
+        // 更新进度
+        function updateProgress(progress, message) {
+            console.log('[进度] 更新进度:', progress, '%', '消息:', message);
+
+            // 更新总体进度条
+            const progressBar = document.getElementById('progressBar');
+            const progressPercent = document.getElementById('progressPercent');
+            const progressText = document.getElementById('progressText');
+
+            if (progressBar) {
+                progressBar.style.width = Math.max(0, Math.min(100, progress)) + '%';
+                console.log('[进度] 更新进度条宽度:', progress + '%');
+            } else {
+                console.error('[进度] 找不到进度条元素');
+            }
+            if (progressPercent) {
+                progressPercent.textContent = Math.round(progress) + '%';
+            }
+            if (progressText) {
+                progressText.textContent = message || `处理中: ${Math.round(progress)}%`;
+            }
+
+            // 解析进度消息，更新各步骤状态
+            updateStepStatus(message, progress);
+        }
+
+        // 更新各步骤状态
+        function updateStepStatus(message, overallProgress) {
+            if (!message) return;
+
+            const lowerMsg = message.toLowerCase();
+
+            // 根据进度值更新步骤
+            // 步骤1: 文件解析 (0-25%)
+            if (overallProgress <= 25) {
+                updateStepUI(1, 'active', message, Math.min(100, overallProgress * 4));
+                updateStepUI(2, 'pending', '等待中...', 0);
+                for (let i = 3; i <= 8; i++) {
+                    updateStepUI(i, 'pending', '等待中...', 0);
+                }
+            }
+            // 步骤2: 项目基础信息提取 (25-35%)
+            else if (overallProgress > 25 && overallProgress <= 35) {
+                updateStepUI(1, 'completed', '文件解析完成', 100);
+                updateStepUI(2, 'active', message, (overallProgress - 25) * 10);
+                updateStepUI(3, 'pending', '等待中...', 0);
+            }
+            // 步骤3: 日期校验 (35-45%)
+            else if (overallProgress > 35 && overallProgress <= 45) {
+                updateStepUI(1, 'completed', '文件解析完成', 100);
+                updateStepUI(2, 'completed', '项目基础信息提取完成', 100);
+                updateStepUI(3, 'active', message, (overallProgress - 35) * 10);
+                updateStepUI(4, 'pending', '等待中...', 0);
+            }
+            // 步骤4: 关键信息一致性校验 (45-50%)
+            else if (overallProgress > 45 && overallProgress <= 50) {
+                updateStepUI(1, 'completed', '文件解析完成', 100);
+                updateStepUI(2, 'completed', '项目基础信息提取完成', 100);
+                updateStepUI(3, 'completed', '日期合法性校验完成', 100);
+                updateStepUI(4, 'active', message, (overallProgress - 45) * 20);
+                updateStepUI(5, 'pending', '等待中...', 0);
+            }
+            // 步骤5: 公司信息一致性校验 (50-55%)
+            else if (overallProgress > 50 && overallProgress <= 55) {
+                updateStepUI(1, 'completed', '文件解析完成', 100);
+                updateStepUI(2, 'completed', '项目基础信息提取完成', 100);
+                updateStepUI(3, 'completed', '日期合法性校验完成', 100);
+                updateStepUI(4, 'completed', '关键信息一致性校验完成', 100);
+                updateStepUI(5, 'active', message, (overallProgress - 50) * 20);
+                updateStepUI(6, 'pending', '等待中...', 0);
+            }
+            // 步骤6: 测试值逻辑校验 (55-65%)
+            else if (overallProgress > 55 && overallProgress <= 65) {
+                for (let i = 1; i <= 5; i++) {
+                    updateStepUI(i, 'completed', '已完成', 100);
+                }
+                updateStepUI(6, 'active', message, (overallProgress - 55) * 10);
+                updateStepUI(7, 'pending', '等待中...', 0);
+            }
+            // 步骤7: 测试完整性校验 (65-85%)
+            else if (overallProgress > 65 && overallProgress <= 85) {
+                for (let i = 1; i <= 6; i++) {
+                    updateStepUI(i, 'completed', '已完成', 100);
+                }
+                updateStepUI(7, 'active', message, Math.min(100, (overallProgress - 65) * 5));
+                updateStepUI(8, 'pending', '等待中...', 0);
+            }
+            // 步骤8: AI检查 (85-95%)
+            else if (overallProgress > 85 && overallProgress <= 95) {
+                for (let i = 1; i <= 7; i++) {
+                    updateStepUI(i, 'completed', '已完成', 100);
+                }
+                updateStepUI(8, 'active', message, (overallProgress - 85) * 10);
+            }
+            // 完成 (95-100%)
+            else if (overallProgress > 95) {
+                for (let i = 1; i <= 8; i++) {
+                    updateStepUI(i, 'completed', '已完成', 100);
+                }
+            }
+        }
+
+        // 更新单个步骤UI
+        function updateStepUI(stepNum, status, desc, progress) {
+            const stepEl = document.getElementById(`step${stepNum}`);
+            const descEl = document.getElementById(`step${stepNum}Desc`);
+            const barEl = document.getElementById(`step${stepNum}Bar`);
+
+            if (!stepEl) return;
+
+            // 移除旧状态
+            stepEl.classList.remove('completed', 'active', 'pending');
+
+            // 添加新状态
+            stepEl.classList.add(status);
+
+            // 更新描述
+            if (descEl) descEl.textContent = desc;
+
+            // 更新进度条
+            if (barEl) {
+                barEl.style.width = progress + '%';
+                if (status === 'completed') {
+                    barEl.style.backgroundColor = 'var(--success-color)';
+                } else if (status === 'active') {
+                    barEl.style.backgroundColor = 'var(--primary-color)';
+                }
+            }
+
+            // 更新步骤编号图标
+            const indicator = stepEl.querySelector('.step-number');
+            if (indicator) {
+                if (status === 'completed') {
+                    indicator.innerHTML = '✓';
+                    indicator.style.backgroundColor = 'var(--success-color)';
+                } else if (status === 'active') {
+                    indicator.style.backgroundColor = 'var(--primary-color)';
+                }
+            }
+        }
+
+        // 显示结果
+        async function showResult() {
+            try {
+                const response = await fetch(`/api/v1/review/result/${currentTaskId}`);
+                const result = await response.json();
+
+                // 显示结果区域
+                document.getElementById('resultArea').classList.remove('hidden');
+                document.getElementById('progressArea').classList.add('hidden');
+
+                // 【新增功能】渲染项目基础信息
+                renderProjectInfo(result.project_info);
+
+                // 渲染摘要
+                renderSummary(result.summary);
+
+                // 渲染详情
+                renderDetails(result.details);
+
+            } catch (error) {
+                console.error('获取结果失败:', error);
+                alert('获取结果失败');
+            }
+        }
+
+        // 【新增功能】渲染项目基础信息
+        function renderProjectInfo(projectInfo) {
+            const section = document.getElementById('projectInfoSection');
+            const container = document.getElementById('projectInfoContent');
+
+            if (!projectInfo) {
+                section.classList.add('hidden');
+                return;
+            }
+
+            // 检查是否有任何字段有值
+            const hasAnyValue = Object.values(projectInfo).some(v => v !== null && v !== undefined && v !== '');
+
+            if (!hasAnyValue) {
+                section.classList.add('hidden');
+                return;
+            }
+
+            section.classList.remove('hidden');
+
+            // 构建信息表格
+            const fields = [
+                { key: '产品型号', label: '产品型号' },
+                { key: '项目编号', label: '项目编号' },
+                { key: '用例编号', label: '用例编号' },
+                { key: '用例版本', label: '用例版本' },
+                { key: '设计师', label: '设计师' },
+                { key: '测试结论', label: '测试结论' },
+                { key: '测试日期', label: '测试日期' },
+                { key: '评审日期', label: '评审日期' },
+                { key: '签发日期', label: '签发日期' }
+            ];
+
+            let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;">';
+
+            fields.forEach(field => {
+                const value = projectInfo[field.key];
+                const displayValue = value && value.trim() ? value : '未检测到';
+
+                html += `
+                    <div style="padding: 12px; background: var(--bg-color); border-radius: var(--radius-md); border-left: 3px solid ${value && value.trim() ? 'var(--success-color)' : 'var(--border-color)'};">
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">${field.label}</div>
+                        <div style="font-size: 14px; font-weight: 500; color: ${value && value.trim() ? 'var(--text-primary)' : 'var(--text-secondary)'};">
+                            ${displayValue}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // 渲染摘要
+        function renderSummary(summary) {
+            const container = document.getElementById('resultSummary');
+            const hasIssues = summary.total_issues > 0;
+
+            container.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${summary.total_sheets}</div>
+                    <div class="stat-label">Sheet 数量</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value ${hasIssues ? 'text-error' : 'text-success'}">${summary.total_issues}</div>
+                    <div class="stat-label">发现的问题</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${summary.date_issues}</div>
+                    <div class="stat-label">日期问题</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${summary.company_info_issues || 0}</div>
+                    <div class="stat-label">公司信息问题</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${summary.ai_issues}</div>
+                    <div class="stat-label">AI 检查问题</div>
+                </div>
+            `;
+        }
+
+        // 渲染详情
+        function renderDetails(details) {
+            // 日期校验
+            const dateValidation = details.date_validation;
+            const dateContainer = document.getElementById('dateValidation');
+            if (dateValidation.is_valid) {
+                dateContainer.innerHTML = renderSuccess('所有日期格式正确');
+            } else {
+                dateContainer.innerHTML = renderErrorList('无效日期', dateValidation.invalid);
+            }
+
+            // 一致性校验
+            const consistency = details.consistency_validation;
+            const consistencyContainer = document.getElementById('consistencyValidation');
+            if (consistency.is_consistent) {
+                consistencyContainer.innerHTML = renderSuccess('关键信息一致');
+            } else {
+                consistencyContainer.innerHTML = renderErrorList('不一致项', consistency.inconsistencies);
+            }
+
+            // 公司信息校验 (新增)
+            const companyInfo = details.company_info_validation;
+            const companyInfoContainer = document.createElement('div');
+            companyInfoContainer.className = 'result-section';
+            companyInfoContainer.id = 'companyInfoValidation';
+
+            let companyInfoTitle = document.createElement('h4');
+            companyInfoTitle.style.marginBottom = '12px';
+            companyInfoTitle.textContent = '公司信息一致性校验';
+            companyInfoContainer.appendChild(companyInfoTitle);
+
+            if (!companyInfo) {
+                companyInfoContainer.innerHTML += renderSuccess('公司信息校验不可用');
+            } else if (companyInfo.is_valid) {
+                companyInfoContainer.innerHTML += renderSuccess('公司信息一致');
+            } else {
+                companyInfoContainer.innerHTML += renderErrorList('公司信息问题', companyInfo.issues);
+            }
+
+            // 插入到一致性校验后面
+            const consistencySection = document.getElementById('consistencyValidation').parentElement;
+            consistencySection.insertAdjacentElement('afterend', companyInfoContainer);
+
+            // 逻辑校验
+            const logic = details.value_logic_validation;
+            const logicContainer = document.getElementById('logicValidation');
+            if (logic.is_valid) {
+                logicContainer.innerHTML = renderSuccess('测试值逻辑正确');
+            } else {
+                logicContainer.innerHTML = renderErrorList('逻辑问题', logic.issues);
+            }
+
+            // 完整性校验
+            const completeness = details.completeness_validation;
+            const completenessContainer = document.getElementById('completenessValidation');
+            if (completeness.is_complete) {
+                completenessContainer.innerHTML = renderSuccess('测试项目完整');
+            } else {
+                completenessContainer.innerHTML = renderErrorList('缺失项目', completeness.missing_items);
+            }
+
+            // AI 检查
+            const ai = details.ai_result;
+            const aiContainer = document.getElementById('aiValidation');
+            if (!ai.available) {
+                aiContainer.innerHTML = '<p style="color: var(--text-secondary);">AI 服务未配置，跳过错别字检查</p>';
+            } else if (ai.issues && ai.issues.length > 0) {
+                aiContainer.innerHTML = renderAIErrorList('错别字/语义问题', ai.issues);
+            } else {
+                aiContainer.innerHTML = renderSuccess('未发现错别字');
+            }
+        }
+
+        // 渲染成功项
+        function renderSuccess(message) {
+            return `
+                <div class="result-item success">
+                    <svg class="result-icon text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    <div class="result-content">
+                        <div class="result-title">${message}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 渲染错误列表（显示所有项目）
+        function renderErrorList(title, items) {
+            if (!items || items.length === 0) {
+                return renderSuccess('无问题');
+            }
+
+            let html = '';
+            // 【优化】显示所有项目，不再限制数量
+            items.forEach((item, index) => {
+                // 【BUG修复】优化错误列表展示
+                let detailHtml = '';
+
+                // 根据不同类型的错误项构建详细信息
+                if (item.issue_type) {
+                    // 测试值逻辑校验错误
+                    detailHtml = `
+                        <div class="result-detail"><strong>问题类型：</strong>${item.issue_type}</div>
+                        <div class="result-detail"><strong>测试项：</strong>${item.item || '未知'}</div>
+                        <div class="result-detail"><strong>标准范围：</strong>[${item.min_value}, ${item.max_value}]</div>
+                        <div class="result-detail"><strong>实测值：</strong>${item.test_value}</div>
+                        <div class="result-detail"><strong>判定结果：</strong>${item.result}</div>
+                    `;
+                } else if (item.error) {
+                    // 日期校验错误
+                    detailHtml = `
+                        <div class="result-detail"><strong>错误原因：</strong>${item.error}</div>
+                    `;
+                } else if (item.issue) {
+                    // 其他错误
+                    detailHtml = `
+                        <div class="result-detail">${item.issue}</div>
+                    `;
+                } else {
+                    // 兜底显示
+                    detailHtml = `
+                        <div class="result-detail">${JSON.stringify(item).substring(0, 200)}</div>
+                    `;
+                }
+
+                html += `
+                    <div class="result-item error">
+                        <svg class="result-icon text-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                        </svg>
+                        <div class="result-content">
+                            <div class="result-title">${item.sheet || item.field || item.issue_type || '错误'} - 第${item.row || ''}行</div>
+                            ${detailHtml}
+                        </div>
+                    </div>
+                `;
+            });
+
+            // 添加统计信息
+            html = `<p style="color: var(--text-secondary); margin-bottom: 12px;">共发现 ${items.length} 个问题：</p>` + html;
+
+            return html;
+        }
+
+        // 渲染 AI 错误列表（显示所有项目）
+        function renderAIErrorList(title, items) {
+            if (!items || items.length === 0) {
+                return renderSuccess('未发现问题');
+            }
+
+            let html = `<p style="color: var(--text-secondary); margin-bottom: 12px;">共发现 ${items.length} 个问题：</p>`;
+            // 【优化】显示所有项目，不再限制数量
+            items.forEach(item => {
+                html += `
+                    <div class="result-item warning">
+                        <svg class="result-icon text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                        </svg>
+                        <div class="result-content">
+                            <div class="result-title">[${item.sheet}] ${item.coordinate}: ${item.type}</div>
+                            <div class="result-detail">原文: ${item.original}</div>
+                            <div class="result-detail">建议: ${item.suggestion}</div>
+                            <div class="result-detail" style="color: var(--text-secondary);">原因: ${item.reason}</div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            return html;
+        }
+
+        // 重置上传
+        function resetUpload() {
+            selectedFile = null;
+            currentTaskId = null;
+            document.getElementById('fileInput').value = '';
+            document.getElementById('selectedFile').classList.add('hidden');
+            document.getElementById('progressArea').classList.add('hidden');
+            document.getElementById('resultArea').classList.add('hidden');
+            document.getElementById('uploadBtn').disabled = false;
+
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+        }
+
+        // 导出报告
+        function exportReport() {
+            if (!currentTaskId) {
+                alert('请先完成审核');
+                return;
+            }
+
+            // 显示加载状态
+            const btn = document.querySelector('[onclick="exportReport()"]');
+            const originalText = btn.textContent;
+            btn.textContent = '导出中...';
+            btn.disabled = true;
+
+            // 调用导出API
+            window.open(`/api/v1/review/export/${currentTaskId}`, '_blank');
+
+            // 恢复按钮状态
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }, 2000);
+        }
+
+        // 拖拽上传
+        const uploadArea = document.getElementById('uploadArea');
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) {
+                selectedFile = file;
+                document.getElementById('fileName').textContent = file.name;
+                document.getElementById('fileSize').textContent = formatFileSize(file.size);
+                document.getElementById('selectedFile').classList.remove('hidden');
+            }
+        });
+    </script>
+
+<style>
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.inland-security-footer {
+  position: fixed;
+  z-index: 10;
+  bottom: 0;
+  right: 0;
+  width: fit-content;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tooltip-container {
+  position: relative;
+}
+
+.trigger-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background-color: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.minimax-link {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 300;
+  color: #adadad;
+  text-decoration: none;
+}
+
+.minimax-link:visited {
+  color: #adadad;
+}
+
+.minimax-link:hover {
+  color: #666666;
+}
+
+.tooltip-content {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  padding-bottom: 16px; /* 8px 内容间距 + 8px 用于鼠标移动的透明区域 */
+  font-size: 12px;
+  line-height: 17px;
+  background-color: #fafafa;
+  border-radius: 12px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  color: #171717;
+}
+
+/* 创建透明的连接区域，让鼠标可以平滑移动到 tooltip */
+.tooltip-content::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 0;
+  right: 0;
+  height: 16px;
+}
+
+.tooltip-container:hover .tooltip-content {
+  display: flex;
+}
+
+.info-section {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.beian-link {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  color: #171717;
+}
+
+.beian-icon {
+  width: 14px;
+  height: 14px;
+  margin-right: 2px;
+}
+
+.underline-text {
+  color: #171717;
+  text-decoration: underline;
+}
+
+.underline-text:hover {
+  color: #000000;
+}
+
+/* 深色模式支持 */
+@media (prefers-color-scheme: dark) {
+  .trigger-content {
+    background-color: transparent;
+  }
+
+  .minimax-link,
+  .minimax-link:visited {
+    color: #666666;
+  }
+
+  .minimax-link:hover {
+    color: #adadad;
+  }
+
+  .tooltip-content {
+    background-color: #262626;
+    color: #ededed;
+  }
+
+  .beian-link,
+  .underline-text {
+    color: #ededed;
+  }
+
+  .underline-text:hover {
+    color: #ffffff;
+  }
+}
+
+/* 步骤进度条样式 */
+.progress-step-container {
+  padding: 16px 0;
+}
+
+.progress-step {
+  display: flex;
+  margin-bottom: 16px;
+  transition: all 0.3s ease;
+}
+
+.progress-step:last-child {
+  margin-bottom: 0;
+}
+
+.progress-step-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-right: 16px;
+}
+
+.step-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: var(--border-color);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.step-line {
+  width: 2px;
+  flex: 1;
+  background-color: var(--border-color);
+  margin-top: 8px;
+  min-height: 40px;
+}
+
+/* 步骤状态样式 */
+.progress-step.active .step-number {
+  background-color: var(--primary-color);
+  color: white;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
+}
+
+.progress-step.active .step-line {
+  background: linear-gradient(to bottom, var(--primary-color), var(--border-color));
+}
+
+.progress-step.completed .step-number {
+  background-color: var(--success-color);
+  color: white;
+}
+
+.progress-step.completed .step-line {
+  background-color: var(--success-color);
+}
+
+.progress-step-content {
+  flex: 1;
+  padding-bottom: 8px;
+}
+
+.progress-step-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.progress-step-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+/* 步骤内嵌进度条 */
+.progress-mini {
+  height: 4px;
+  background-color: var(--bg-color);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-mini-bar {
+  height: 100%;
+  background-color: var(--primary-color);
+  border-radius: 2px;
+  transition: width 0.5s ease, background-color 0.3s ease;
+}
+
+/* 步骤状态颜色 */
+.progress-step.active .progress-step-title {
+  color: var(--primary-color);
+}
+
+.progress-step.completed .progress-step-title {
+  color: var(--success-color);
+}
+
+/* 动画效果 */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.progress-step.active .step-number {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.progress-step.active .progress-mini-bar {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+</style>
+
+</body>
+</html>

@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能分析 - 硬件研发部测试报告审核平台</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+    <!-- 顶部导航 -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <a href="/" class="logo">
+                    <img src="/static/images/logo.jpg" alt="Logo" class="logo-img">
+                    <span class="logo-text">硬件研发部测试报告审核平台</span>
+                </a>
+                <nav class="nav">
+                    <a href="/" class="nav-link">首页</a>
+                    <a href="/review" class="nav-link">智能审核</a>
+                    <a href="/analysis" class="nav-link active">智能分析</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主内容 -->
+    <main class="main-content">
+        <div class="container">
+            <!-- 页面标题 -->
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h1 class="card-title">测数聚合智能分析系统</h1>
+                        <p class="card-subtitle">批量上传测试报告，自动聚合并生成可视化分析</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 上传区域 -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">批量上传测试报告</h3>
+                </div>
+
+                <div id="uploadArea" class="file-upload" onclick="document.getElementById('fileInput').click()">
+                    <svg class="file-upload-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                    <p class="file-upload-text">点击或拖拽上传多个 Excel 文件</p>
+                    <p class="file-upload-hint">支持批量上传 .xlsx 和 .xls 格式，建议上传同测试方案的报告</p>
+                </div>
+                <input type="file" id="fileInput" class="file-input" accept=".xlsx,.xls" multiple onchange="handleFileSelect(event)">
+
+                <div id="selectedFiles" class="hidden" style="margin-top: 16px;">
+                    <h4 style="margin-bottom: 12px;">已选择文件 (<span id="fileCount">0</span>)</h4>
+                    <div id="fileList" style="max-height: 200px; overflow-y: auto; margin-bottom: 16px;">
+                    </div>
+                    <button class="btn btn-primary" onclick="startAnalysis()" id="analyzeBtn">
+                        开始分析
+                    </button>
+                </div>
+            </div>
+
+            <!-- 分析进度 -->
+            <div id="progressArea" class="card hidden">
+                <div class="card-header">
+                    <h3 class="card-title">分析进度</h3>
+                </div>
+                <div class="progress-step-container">
+                    <!-- 步骤1: 文件上传 -->
+                    <div class="progress-step" id="step1">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">1</span>
+                            <div class="step-line"></div>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">文件上传中</div>
+                            <div class="progress-step-desc" id="step1Desc">正在上传文件...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step1Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 步骤2: 数据解析 -->
+                    <div class="progress-step" id="step2">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">2</span>
+                            <div class="step-line"></div>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">数据解析</div>
+                            <div class="progress-step-desc" id="step2Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step2Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 步骤3: 数据聚合 -->
+                    <div class="progress-step" id="step3">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">3</span>
+                            <div class="step-line"></div>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">数据聚合统计</div>
+                            <div class="progress-step-desc" id="step3Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step3Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 步骤4: 图表生成 -->
+                    <div class="progress-step" id="step4">
+                        <div class="progress-step-indicator">
+                            <span class="step-number">4</span>
+                        </div>
+                        <div class="progress-step-content">
+                            <div class="progress-step-title">可视化图表生成</div>
+                            <div class="progress-step-desc" id="step4Desc">等待中...</div>
+                            <div class="progress-mini">
+                                <div class="progress-mini-bar" id="step4Bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 总体进度 -->
+                <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-color);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 14px; font-weight: 500;">总体进度</span>
+                        <span id="progressPercent" style="font-size: 14px; color: var(--primary-color);">0%</span>
+                    </div>
+                    <div class="progress">
+                        <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+                    </div>
+                    <p class="progress-text" id="progressText">等待中...</p>
+                </div>
+            </div>
+
+            <!-- 分析结果 -->
+            <div id="resultArea" class="card hidden">
+                <div class="card-header">
+                    <h3 class="card-title">分析结果</h3>
+                    <button class="btn btn-secondary btn-sm" onclick="exportReport()">
+                        导出报告
+                    </button>
+                </div>
+
+                <!-- 结果摘要 -->
+                <div class="stats-grid" id="resultSummary">
+                </div>
+
+                <!-- 统计表格 -->
+                <div class="result-section">
+                    <h4 style="margin-bottom: 12px;">统计数据</h4>
+                    <div class="table-container">
+                        <table class="table" id="statisticsTable">
+                            <thead>
+                                <tr>
+                                    <th>测试项</th>
+                                    <th>样本数</th>
+                                    <th>最大值</th>
+                                    <th>最小值</th>
+                                    <th>平均值</th>
+                                    <th>标准差</th>
+                                    <th>中位数</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 图表控制 -->
+                <div class="chart-controls">
+                    <button class="btn btn-secondary btn-sm" onclick="showChart('histogram')">分布直方图</button>
+                    <button class="btn btn-secondary btn-sm" onclick="showChart('scatter')">离散点图</button>
+                    <button class="btn btn-secondary btn-sm" onclick="showChart('box')">箱线图</button>
+                    <button class="btn btn-secondary btn-sm" onclick="showChart('trend')">趋势图</button>
+                </div>
+
+                <!-- 图表容器 -->
+                <div class="chart-container">
+                    <div id="chart" style="width: 100%; height: 500px;"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 页脚 -->
+    <footer style="background: var(--bg-card); border-top: 1px solid var(--border-color); padding: 20px 0; margin-top: 40px;">
+        <div class="container text-center">
+            <p style="color: var(--text-secondary); font-size: 13px;">
+                硬件研发部测试报告审核平台 v1.0.0
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        // 全局变量
+        let selectedFiles = [];
+        let currentTaskId = null;
+        let pollingInterval = null;
+        let analysisResult = null;
+        let currentChartType = 'histogram';
+
+        // 处理文件选择
+        function handleFileSelect(event) {
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+
+            selectedFiles = Array.from(files);
+            renderFileList();
+        }
+
+        // 渲染文件列表
+        function renderFileList() {
+            const container = document.getElementById('fileList');
+            const countSpan = document.getElementById('fileCount');
+
+            countSpan.textContent = selectedFiles.length;
+
+            if (selectedFiles.length === 0) {
+                document.getElementById('selectedFiles').classList.add('hidden');
+                return;
+            }
+
+            document.getElementById('selectedFiles').classList.remove('hidden');
+
+            container.innerHTML = selectedFiles.map((file, index) => `
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg-color); border-radius: var(--radius-sm); margin-bottom: 8px;">
+                    <span>${index + 1}. ${file.name}</span>
+                    <span style="color: var(--text-secondary); font-size: 12px;">${formatFileSize(file.size)}</span>
+                </div>
+            `).join('');
+        }
+
+        // 格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        // 开始分析
+        async function startAnalysis() {
+            if (selectedFiles.length === 0) return;
+
+            const formData = new FormData();
+            selectedFiles.forEach(file => {
+                formData.append('files', file);
+            });
+
+            // 显示进度区域
+            document.getElementById('progressArea').classList.remove('hidden');
+            document.getElementById('selectedFiles').classList.add('hidden');
+            document.getElementById('analyzeBtn').disabled = true;
+
+            try {
+                // 上传文件
+                const response = await fetch('/api/v1/analysis/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || '上传失败');
+                }
+
+                currentTaskId = data.task_id;
+
+                // 开始轮询
+                startPolling();
+
+            } catch (error) {
+                alert('上传失败: ' + error.message);
+                resetUpload();
+            }
+        }
+
+        // 开始轮询
+        function startPolling() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+
+            pollingInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/v1/analysis/status/${currentTaskId}`);
+                    const data = await response.json();
+
+                    updateProgress(data.progress, data.message);
+
+                    if (data.status === 'completed') {
+                        clearInterval(pollingInterval);
+                        showResult();
+                    } else if (data.status === 'error') {
+                        clearInterval(pollingInterval);
+                        alert('分析失败: ' + data.message);
+                        resetUpload();
+                    }
+                } catch (error) {
+                    console.error('轮询失败:', error);
+                }
+            }, 2000);
+        }
+
+        // 更新进度
+        function updateProgress(progress, message) {
+            // 更新总体进度条
+            document.getElementById('progressBar').style.width = progress + '%';
+            document.getElementById('progressPercent').textContent = Math.round(progress) + '%';
+            document.getElementById('progressText').textContent = message || `处理中: ${Math.round(progress)}%`;
+
+            // 解析进度消息，更新各步骤状态
+            updateStepStatus(message, progress);
+        }
+
+        // 更新各步骤状态
+        function updateStepStatus(message, overallProgress) {
+            if (!message) return;
+
+            const lowerMsg = message.toLowerCase();
+
+            // 步骤1: 文件上传
+            if (lowerMsg.includes('上传') || lowerMsg.includes('接收')) {
+                updateStepUI(1, 'active', '正在上传文件...', 100);
+                if (overallProgress > 20) {
+                    updateStepUI(2, 'active', '准备中...', 0);
+                }
+            }
+
+            // 步骤2: 数据解析
+            if (lowerMsg.includes('解析') || lowerMsg.includes('读取') || lowerMsg.includes('文件')) {
+                updateStepUI(2, 'active', '正在解析数据...', 100);
+                updateStepUI(1, 'completed', '文件上传完成', 100);
+                if (overallProgress > 40) {
+                    updateStepUI(3, 'active', '准备中...', 0);
+                }
+            }
+
+            // 步骤3: 数据聚合
+            if (lowerMsg.includes('聚合') || lowerMsg.includes('统计') || lowerMsg.includes('匹配')) {
+                updateStepUI(3, 'active', '正在聚合数据...', 100);
+                updateStepUI(2, 'completed', '数据解析完成', 100);
+                if (overallProgress > 70) {
+                    updateStepUI(4, 'active', '准备中...', 0);
+                }
+            }
+
+            // 步骤4: 图表生成
+            if (lowerMsg.includes('图表') || lowerMsg.includes('生成') || lowerMsg.includes('可视化')) {
+                updateStepUI(4, 'active', '正在生成图表...', 100);
+                updateStepUI(3, 'completed', '数据聚合完成', 100);
+            }
+
+            // 完成
+            if (overallProgress >= 100) {
+                updateStepUI(4, 'completed', '图表生成完成', 100);
+            }
+        }
+
+        // 更新单个步骤UI
+        function updateStepUI(stepNum, status, desc, progress) {
+            const stepEl = document.getElementById(`step${stepNum}`);
+            const descEl = document.getElementById(`step${stepNum}Desc`);
+            const barEl = document.getElementById(`step${stepNum}Bar`);
+
+            if (!stepEl) return;
+
+            // 移除旧状态
+            stepEl.classList.remove('completed', 'active', 'pending');
+
+            // 添加新状态
+            stepEl.classList.add(status);
+
+            // 更新描述
+            if (descEl) descEl.textContent = desc;
+
+            // 更新进度条
+            if (barEl) {
+                barEl.style.width = progress + '%';
+                if (status === 'completed') {
+                    barEl.style.backgroundColor = 'var(--success-color)';
+                } else if (status === 'active') {
+                    barEl.style.backgroundColor = 'var(--primary-color)';
+                }
+            }
+
+            // 更新步骤编号图标
+            const indicator = stepEl.querySelector('.step-number');
+            if (indicator) {
+                if (status === 'completed') {
+                    indicator.innerHTML = '✓';
+                    indicator.style.backgroundColor = 'var(--success-color)';
+                } else if (status === 'active') {
+                    indicator.style.backgroundColor = 'var(--primary-color)';
+                }
+            }
+        }
+
+        // 显示结果
+        async function showResult() {
+            try {
+                const response = await fetch(`/api/v1/analysis/result/${currentTaskId}`);
+                analysisResult = await response.json();
+
+                // 显示结果区域
+                document.getElementById('resultArea').classList.remove('hidden');
+                document.getElementById('progressArea').classList.add('hidden');
+
+                // 渲染摘要
+                renderSummary(analysisResult.summary);
+
+                // 渲染统计表格
+                renderStatistics(analysisResult.statistics);
+
+                // 渲染图表
+                showChart('histogram');
+
+            } catch (error) {
+                console.error('获取结果失败:', error);
+                alert('获取结果失败');
+            }
+        }
+
+        // 渲染摘要
+        function renderSummary(summary) {
+            const container = document.getElementById('resultSummary');
+
+            container.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${summary.files_processed}</div>
+                    <div class="stat-label">处理文件数</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${summary.total_records}</div>
+                    <div class="stat-label">总记录数</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${summary.unique_test_items}</div>
+                    <div class="stat-label">测试项数量</div>
+                </div>
+            `;
+        }
+
+        // 渲染统计表格
+        function renderStatistics(statistics) {
+            const tbody = document.querySelector('#statisticsTable tbody');
+            tbody.innerHTML = '';
+
+            Object.entries(statistics).forEach(([itemName, stats]) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${itemName}</td>
+                    <td>${stats.count || '-'}</td>
+                    <td>${stats.max ? stats.max.toFixed(4) : '-'}</td>
+                    <td>${stats.min ? stats.min.toFixed(4) : '-'}</td>
+                    <td>${stats.mean ? stats.mean.toFixed(4) : '-'}</td>
+                    <td>${stats.std ? stats.std.toFixed(4) : '-'}</td>
+                    <td>${stats.median ? stats.median.toFixed(4) : '-'}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // 显示图表
+        function showChart(chartType) {
+            currentChartType = chartType;
+
+            if (!analysisResult || !analysisResult.charts) return;
+
+            const chartData = analysisResult.charts[chartType];
+            if (!chartData) return;
+
+            // 更新按钮状态
+            document.querySelectorAll('.chart-controls .btn').forEach(btn => {
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-secondary');
+            });
+            event.target.classList.remove('btn-secondary');
+            event.target.classList.add('btn-primary');
+
+            // 渲染图表
+            Plotly.newPlot('chart', chartData.data, chartData.layout, {
+                responsive: true,
+                displayModeBar: true,
+                displaylogo: false,
+                modeBarButtonsToRemove: ['sendDataToCloud']
+            });
+        }
+
+        // 重置上传
+        function resetUpload() {
+            selectedFiles = [];
+            currentTaskId = null;
+            analysisResult = null;
+            document.getElementById('fileInput').value = '';
+            document.getElementById('selectedFiles').classList.add('hidden');
+            document.getElementById('progressArea').classList.add('hidden');
+            document.getElementById('resultArea').classList.add('hidden');
+            document.getElementById('analyzeBtn').disabled = false;
+
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+        }
+
+        // 导出报告
+        function exportReport() {
+            alert('导出功能开发中...');
+        }
+
+        // 拖拽上传
+        const uploadArea = document.getElementById('uploadArea');
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files && files.length > 0) {
+                selectedFiles = Array.from(files);
+                renderFileList();
+            }
+        });
+    </script>
+
+<style>
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.inland-security-footer {
+  position: fixed;
+  z-index: 10;
+  bottom: 0;
+  right: 0;
+  width: fit-content;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tooltip-container {
+  position: relative;
+}
+
+.trigger-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background-color: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.minimax-link {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 300;
+  color: #adadad;
+  text-decoration: none;
+}
+
+.minimax-link:visited {
+  color: #adadad;
+}
+
+.minimax-link:hover {
+  color: #666666;
+}
+
+.tooltip-content {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  padding-bottom: 16px; /* 8px 内容间距 + 8px 用于鼠标移动的透明区域 */
+  font-size: 12px;
+  line-height: 17px;
+  background-color: #fafafa;
+  border-radius: 12px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  color: #171717;
+}
+
+/* 创建透明的连接区域，让鼠标可以平滑移动到 tooltip */
+.tooltip-content::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 0;
+  right: 0;
+  height: 16px;
+}
+
+.tooltip-container:hover .tooltip-content {
+  display: flex;
+}
+
+.info-section {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.beian-link {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  color: #171717;
+}
+
+.beian-icon {
+  width: 14px;
+  height: 14px;
+  margin-right: 2px;
+}
+
+.underline-text {
+  color: #171717;
+  text-decoration: underline;
+}
+
+.underline-text:hover {
+  color: #000000;
+}
+
+/* 深色模式支持 */
+@media (prefers-color-scheme: dark) {
+  .trigger-content {
+    background-color: transparent;
+  }
+
+  .minimax-link,
+  .minimax-link:visited {
+    color: #666666;
+  }
+
+  .minimax-link:hover {
+    color: #adadad;
+  }
+
+  .tooltip-content {
+    background-color: #262626;
+    color: #ededed;
+  }
+
+  .beian-link,
+  .underline-text {
+    color: #ededed;
+  }
+
+  .underline-text:hover {
+    color: #ffffff;
+  }
+}
+
+/* 步骤进度条样式 */
+.progress-step-container {
+  padding: 16px 0;
+}
+
+.progress-step {
+  display: flex;
+  margin-bottom: 16px;
+  transition: all 0.3s ease;
+}
+
+.progress-step:last-child {
+  margin-bottom: 0;
+}
+
+.progress-step-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-right: 16px;
+}
+
+.step-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: var(--border-color);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.step-line {
+  width: 2px;
+  flex: 1;
+  background-color: var(--border-color);
+  margin-top: 8px;
+  min-height: 40px;
+}
+
+/* 步骤状态样式 */
+.progress-step.active .step-number {
+  background-color: var(--primary-color);
+  color: white;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
+}
+
+.progress-step.active .step-line {
+  background: linear-gradient(to bottom, var(--primary-color), var(--border-color));
+}
+
+.progress-step.completed .step-number {
+  background-color: var(--success-color);
+  color: white;
+}
+
+.progress-step.completed .step-line {
+  background-color: var(--success-color);
+}
+
+.progress-step-content {
+  flex: 1;
+  padding-bottom: 8px;
+}
+
+.progress-step-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.progress-step-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+/* 步骤内嵌进度条 */
+.progress-mini {
+  height: 4px;
+  background-color: var(--bg-color);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-mini-bar {
+  height: 100%;
+  background-color: var(--primary-color);
+  border-radius: 2px;
+  transition: width 0.5s ease, background-color 0.3s ease;
+}
+
+/* 步骤状态颜色 */
+.progress-step.active .progress-step-title {
+  color: var(--primary-color);
+}
+
+.progress-step.completed .progress-step-title {
+  color: var(--success-color);
+}
+
+/* 动画效果 */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.progress-step.active .step-number {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.progress-step.active .progress-mini-bar {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+</style>
+
+</body>
+</html>

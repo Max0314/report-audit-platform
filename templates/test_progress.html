@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试页面</title>
+</head>
+<body>
+    <h1>进度条测试</h1>
+
+    <button onclick="testFunction()">点击测试</button>
+
+    <div id="progressContainer" style="margin-top: 20px;">
+        <div id="progressBar" style="width: 0%; height: 30px; background-color: #4CAF50; transition: width 0.3s;"></div>
+        <div id="progressText" style="margin-top: 10px;">0%</div>
+    </div>
+
+    <script>
+        console.log('[测试] JavaScript 已加载');
+
+        function testFunction() {
+            console.log('[测试] 点击了按钮');
+
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 10;
+                console.log('[测试] 更新进度:', progress + '%');
+
+                document.getElementById('progressBar').style.width = progress + '%';
+                document.getElementById('progressText').textContent = progress + '%';
+
+                if (progress >= 100) {
+                    clearInterval(interval);
+                    console.log('[测试] 完成!');
+                }
+            }, 500);
+        }
+
+        console.log('[测试] 脚本初始化完成');
+    </script>
+</body>
+</html>

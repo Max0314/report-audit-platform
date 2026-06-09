@@ -1,0 +1,31 @@
+# 硬件研发部测试报告审核平台
+# 依赖配置文件
+
+# FastAPI 框架
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# 数据处理
+pandas==2.1.4
+openpyxl==3.1.2
+numpy==1.26.3
+
+# AI 服务
+openai==1.10.0
+httpx==0.26.0
+
+# 配置管理
+pyyaml==6.0.1
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# 数据可视化（后端处理用）
+plotly==5.18.0
+kaleido==0.2.1
+
+# 工具库
+python-dateutil==2.8.2
+python-dotenv==1.0.0
+jinja2==3.1.6
+psutil==5.9.8

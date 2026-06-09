@@ -1,0 +1,111 @@
+# 硬件研发部测试报告审核平台 - 配置文件
+# 配置文件遵循 YAML 格式，修改配置后需重启服务生效
+
+server:
+  # 服务器配置
+  host: "0.0.0.0"      # 监听地址
+  port: 8000           # 监听端口
+  env: "production"     # 运行环境
+  debug: true          # 调试模式
+
+ai_service:
+  # AI 服务配置
+  provider: "deepseek"  # 服务提供商
+  api_key: ""          # API Key（请填入您的 DeepSeek API Key）
+  base_url: "https://api.deepseek.com"  # API 地址
+  model: "deepseek-chat"  # 模型名称
+  temperature: 0.1     # 温度参数
+  max_tokens: 4000      # 最大 Token 数
+  timeout: 120          # 超时时间（秒）
+
+file_storage:
+  # 文件存储配置
+  upload_dir: "./data/uploads"      # 上传文件目录
+  temp_dir: "./data/temp"           # 临时文件目录
+  archive_dir: "./data/archive"      # 归档文件目录
+  max_file_size: 104857600          # 最大文件大小（字节），默认 100MB
+  allowed_extensions:                # 允许的文件扩展名
+    - .xlsx
+    - .xls
+
+validation_rules:
+  # 验证规则配置
+
+  # 标准测试项目清单（按类别）
+  # 如果为空或不配置，系统将跳过测试项完整性检查
+  # 请根据实际测试报告内容配置标准测试项
+  standard_test_items: {}  # 示例：{"功能测试": ["按键功能", "显示屏"], "性能测试": ["功耗"]}
+
+  # 开启测试项完整性检查（需要先配置 standard_test_items）
+  enable_completeness_check: false
+
+  # 关键信息字段（用于一致性校验）
+  # 注意：测试标准/测试日期 不同测试项有不同的值是正常的，不应视为不一致
+  key_info_fields:
+    - 产品型号
+    - 版本号
+    - 项目编号
+    - 测试人
+
+  # 日期格式支持
+  date_formats:
+    - "%Y-%m-%d"
+    - "%Y/%m/%d"
+    - "%Y.%m.%d"
+    - "%Y年%m月%d日"
+
+  # 测试值判定规则
+  test_value_rules:
+    电压:
+      min: 0
+      max: 50
+      unit: "V"
+    电流:
+      min: 0
+      max: 10
+      unit: "A"
+    功耗:
+      min: 0
+      max: 100
+      unit: "W"
+    温度:
+      min: -40
+      max: 85
+      unit: "℃"
+    频率:
+      min: 0
+      max: 10000
+      unit: "MHz"
+
+analysis:
+  # 分析模块配置
+
+  # 统计指标
+  statistics:
+    - max      # 最大值
+    - min      # 最小值
+    - mean     # 平均值
+    - std      # 标准差
+    - median   # 中位数
+
+  # 图表类型
+  chart_types:
+    - histogram  # 直方图
+    - scatter    # 散点图
+    - line       # 折线图
+    - box        # 箱线图
+
+  # 数据聚合字段（按优先级排序）
+  aggregation_fields:
+    - 测试项目
+    - 测试项
+    - 测试小项
+    - 测试项名称
+
+  # 数值字段（按优先级排序）
+  value_fields:
+    - 测试值
+    - 实测值
+    - 数值
+    - 结果值
+    - 测量值
