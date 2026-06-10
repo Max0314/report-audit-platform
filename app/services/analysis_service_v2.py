@@ -384,21 +384,16 @@ class BoxPlotChart(BaseChart):
             import plotly.graph_objects as go
             fig = go.Figure()
 
-            box_data = []
-            item_names = []
             for item_name, values in aggregated_data.items():
                 if len(values) < 1:
                     continue
-                box_data.append(values)
-                item_names.append(item_name)
-
-            fig.add_trace(go.Box(
-                y=box_data,
-                name=item_names,
-                boxpoints='all',
-                jitter=0.3,
-                pointpos=-1.8
-            ))
+                fig.add_trace(go.Box(
+                    y=values,
+                    name=item_name,
+                    boxpoints='all',
+                    jitter=0.3,
+                    pointpos=-1.8
+                ))
 
             fig.update_layout(
                 title="数据箱线图",
