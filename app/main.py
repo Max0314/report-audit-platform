@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="硬件研发部测试报告审核平台",
     description="智能测试报告审核与数据分析系统",
-    version="1.0.0",
+    version="1.2.0",
     lifespan=lifespan
 )
 

@@ -21,7 +21,7 @@ from app.core.exceptions import (
 )
 from app.core.template_config import standard_config, StandardTemplateConfig
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "get_settings",
