@@ -63,6 +63,18 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- 上传进度条 -->
+                <div id="uploadProgressArea" class="hidden" style="margin-top: 16px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                        <span id="uploadProgressText" style="font-size: 14px; color: var(--text-secondary);">正在上传文件...</span>
+                        <span id="uploadPercent" style="font-size: 14px; font-weight: 600; color: var(--primary-color);">0%</span>
+                    </div>
+                    <div class="progress-mini" style="height: 8px;">
+                        <div id="uploadProgressBar" class="progress-mini-bar" style="width: 0%; background: linear-gradient(90deg, var(--primary-color), #667eea);"></div>
+                    </div>
+                    <p id="uploadSpeed" style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;"></p>
+                </div>
             </div>
 
             <!-- 审核进度 -->
@@ -299,8 +311,8 @@
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         }
 
-        // 开始审核
-        async function startReview() {
+        // 开始审核（带上传进度）
+        function startReview() {
             if (!selectedFile) {
                 console.error('[审核] 未选择文件');
                 return;
@@ -311,56 +323,111 @@
             const formData = new FormData();
             formData.append('file', selectedFile);
 
-            // 显示进度区域
+            // 隐藏文件选择，显示进度
             const progressArea = document.getElementById('progressArea');
+            const uploadProgressArea = document.getElementById('uploadProgressArea');
             const selectedFileDiv = document.getElementById('selectedFile');
             const uploadBtn = document.getElementById('uploadBtn');
 
-            console.log('[审核] 尝试显示进度区域...');
-            console.log('[审核] progressArea.classList before:', progressArea ? progressArea.classList.toString() : 'null');
-
-            if (progressArea) {
-                progressArea.classList.remove('hidden');
-                console.log('[审核] progressArea.classList after:', progressArea.classList.toString());
-                console.log('[审核] progressArea.style.display:', progressArea.style.display);
-                console.log('[审核] 进度区域应该已显示');
-            } else {
-                console.error('[审核] 找不到进度区域元素');
-            }
-
             if (selectedFileDiv) selectedFileDiv.classList.add('hidden');
             if (uploadBtn) uploadBtn.disabled = true;
+            if (uploadProgressArea) uploadProgressArea.classList.remove('hidden');
 
-            try {
-                console.log('[审核] 正在上传文件...');
-                // 上传文件
-                const response = await fetch('/api/v1/review/upload', {
-                    method: 'POST',
-                    body: formData
-                });
+            // 重置上传进度
+            document.getElementById('uploadProgressBar').style.width = '0%';
+            document.getElementById('uploadPercent').textContent = '0%';
+            document.getElementById('uploadProgressText').textContent = '正在上传文件...';
+            document.getElementById('uploadSpeed').textContent = '';
 
-                console.log('[审核] 上传响应状态:', response.status);
+            // 使用 XMLHttpRequest 实现上传进度追踪
+            const xhr = new XMLHttpRequest();
+            const startTime = Date.now();
+            let lastLoaded = 0;
+            let lastTime = startTime;
 
-                const data = await response.json();
-                console.log('[审核] 上传响应数据:', data);
+            xhr.upload.addEventListener('progress', function(e) {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    document.getElementById('uploadProgressBar').style.width = percent + '%';
+                    document.getElementById('uploadPercent').textContent = percent + '%';
 
-                if (!response.ok) {
-                    throw new Error(data.detail || '上传失败');
+                    // 计算上传速度
+                    const now = Date.now();
+                    const deltaTime = (now - lastTime) / 1000;
+                    if (deltaTime > 0.5) {
+                        const deltaLoaded = e.loaded - lastLoaded;
+                        const speed = deltaLoaded / deltaTime;
+                        lastLoaded = e.loaded;
+                        lastTime = now;
+
+                        let speedText;
+                        if (speed > 1024 * 1024) {
+                            speedText = (speed / 1024 / 1024).toFixed(1) + ' MB/s';
+                        } else if (speed > 1024) {
+                            speedText = (speed / 1024).toFixed(1) + ' KB/s';
+                        } else {
+                            speedText = speed.toFixed(0) + ' B/s';
+                        }
+                        document.getElementById('uploadSpeed').textContent = `上传速度: ${speedText}`;
+                    }
+
+                    // 更新上传文本
+                    if (percent < 100) {
+                        document.getElementById('uploadProgressText').textContent = `正在上传 ${selectedFile.name}...`;
+                    } else {
+                        document.getElementById('uploadProgressText').textContent = '上传完成，等待服务器处理...';
+                    }
                 }
+            });
 
-                currentTaskId = data.task_id;
-                console.log('[审核] 获取到任务ID:', currentTaskId);
+            xhr.addEventListener('load', function() {
+                if (xhr.status === 200) {
+                    try {
+                        const data = JSON.parse(xhr.responseText);
+                        currentTaskId = data.task_id;
 
-                // 开始轮询
-                console.log('[审核] 准备启动轮询...');
-                startPolling();
-                console.log('[审核] 轮询已启动');
+                        // 上传完成，隐藏上传进度，显示审核进度
+                        document.getElementById('uploadProgressText').textContent = '文件上传完成！';
+                        document.getElementById('uploadProgressBar').style.width = '100%';
+                        document.getElementById('uploadPercent').textContent = '100%';
 
-            } catch (error) {
-                console.error('[审核] 上传失败:', error);
-                alert('上传失败: ' + error.message);
+                        // 延迟一下再切换到审核进度，让用户看到上传完成
+                        setTimeout(() => {
+                            if (uploadProgressArea) uploadProgressArea.classList.add('hidden');
+                            if (progressArea) progressArea.classList.remove('hidden');
+                            startPolling();
+                        }, 500);
+                    } catch (e) {
+                        console.error('[审核] 解析响应失败:', e);
+                        alert('上传失败: 响应解析错误');
+                        resetUpload();
+                    }
+                } else {
+                    let errorMsg = '上传失败';
+                    try {
+                        const errData = JSON.parse(xhr.responseText);
+                        errorMsg = errData.detail || errorMsg;
+                    } catch (e) {}
+                    console.error('[审核] 上传失败, 状态:', xhr.status, '错误:', errorMsg);
+                    alert('上传失败: ' + errorMsg);
+                    resetUpload();
+                }
+            });
+
+            xhr.addEventListener('error', function() {
+                console.error('[审核] 网络错误');
+                alert('上传失败: 网络错误，请检查连接');
                 resetUpload();
-            }
+            });
+
+            xhr.addEventListener('abort', function() {
+                console.error('[审核] 上传已取消');
+                alert('上传已取消');
+                resetUpload();
+            });
+
+            xhr.open('POST', '/api/v1/review/upload', true);
+            xhr.send(formData);
         }
 
         // 开始轮询
@@ -852,6 +919,7 @@
             document.getElementById('fileInput').value = '';
             document.getElementById('selectedFile').classList.add('hidden');
             document.getElementById('progressArea').classList.add('hidden');
+            document.getElementById('uploadProgressArea').classList.add('hidden');
             document.getElementById('resultArea').classList.add('hidden');
             document.getElementById('uploadBtn').disabled = false;
 

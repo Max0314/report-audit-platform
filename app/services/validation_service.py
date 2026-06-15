@@ -682,6 +682,79 @@ class ValidationService:
 
         return results
 
+    def _is_text_based_sheet(
+        self,
+        worksheet: Worksheet,
+        col_mapping: Dict[str, Optional[int]],
+        header_row_idx: int
+    ) -> bool:
+        """检查Sheet是否为文本描述格式（非数值格式）
+
+        某些Sheet（如Power sequence）的测试数据列包含的是文本描述
+        （如"要求：Delay time：...\\n实测：Tu1=0.2ms"），而非纯数值。
+        这种Sheet无法进行数值校验，应跳过。
+
+        Args:
+            worksheet: openpyxl Worksheet对象
+            col_mapping: 列映射字典
+            header_row_idx: 表头行索引
+
+        Returns:
+            True 表示该Sheet为文本描述格式，应跳过数值校验
+        """
+        # 获取数据列
+        data_col = col_mapping.get("data_col")
+        if not data_col:
+            return False
+
+        # 采样表头后的前N行数据进行检查
+        sample_rows = []
+        max_sample = min(header_row_idx + 8, worksheet.max_row + 1)
+        for row_idx in range(header_row_idx + 1, max_sample):
+            cell = worksheet.cell(row=row_idx, column=data_col)
+            val = cell.value
+            if val is not None and str(val).strip():
+                sample_rows.append(str(val).strip())
+
+        if not sample_rows:
+            return False
+
+        # 检查采样数据是否为文本描述格式
+        text_count = 0
+        numeric_count = 0
+        for val in sample_rows:
+            # 文本描述特征：包含中文、换行符、文字描述关键词
+            has_chinese = any('\u4e00' <= c <= '\u9fff' for c in val)
+            has_newline = '\n' in val
+            has_text_desc = any(kw in val for kw in ['要求', '实测', '标准', '说明',
+                                                       '条件', '规范', '测试', '步骤'])
+
+            if has_chinese or has_newline or has_text_desc:
+                text_count += 1
+
+            # 检查是否为纯数值（可被直接解析的数字）
+            try:
+                float(val.replace(',', '').strip())
+                numeric_count += 1
+            except (ValueError, TypeError):
+                pass
+
+        # 如果文本描述格式的样本占多数(>=50%)，判定为文本描述Sheet
+        if text_count >= max(1, len(sample_rows) * 0.5):
+            logger.debug(f"  [文本Sheet检测] {worksheet.title}: 采样{len(sample_rows)}行，"
+                        f"{text_count}行含文本描述，判定为文本格式Sheet")
+            return True
+
+        # 如果数值样本很少(<30%)，也判定为文本描述Sheet
+        if numeric_count < len(sample_rows) * 0.3:
+            logger.debug(f"  [文本Sheet检测] {worksheet.title}: 采样{len(sample_rows)}行，"
+                        f"仅{numeric_count}行可解析为数值，判定为文本格式Sheet")
+            return True
+
+        logger.debug(f"  [文本Sheet检测] {worksheet.title}: 采样{len(sample_rows)}行，"
+                    f"数值{numeric_count}行/文本{text_count}行，判定为数值格式Sheet")
+        return False
+
     def _validate_single_sheet(
         self,
         workbook_path: Optional[str],
@@ -729,6 +802,13 @@ class ValidationService:
             col_mapping = self._extract_column_mapping_openpyxl(worksheet, header_row_idx, sheet_name)
 
             col_mapping = self._apply_template_config(col_mapping, template_config)
+
+            # 【检查】如果数据列包含文本描述而非数值，跳过此类Sheet
+            # 如 Power sequence 等以文本描述为主的格式
+            if self._is_text_based_sheet(worksheet, col_mapping, header_row_idx):
+                logger.info(f"  Sheet '{sheet_name}' 数据列为文本描述格式，跳过数值校验")
+                wb.close()
+                return issues, processed_count
 
             # 遍历数据行
             for row_idx in range(header_row_idx + 1, worksheet.max_row + 1):
@@ -987,6 +1067,12 @@ class ValidationService:
         if data_value is None:
             return False
 
+        # 【修复】处理倒置范围（min > max 时自动交换）
+        # 如时序中的 [497, 1] 实际含义是 max=497（时间需<497ms）
+        if min_value is not None and max_value is not None and min_value > max_value:
+            min_value, max_value = max_value, min_value
+            logger.debug(f"  【修复】倒置范围已自动交换 -> [{min_value}, {max_value}]")
+
         # 范围判断
         if min_value is not None and max_value is not None:
             return data_value < min_value or data_value > max_value
@@ -997,22 +1083,60 @@ class ValidationService:
 
         return False
 
+    def _build_col_header_map(self, worksheet: Worksheet, max_scan_row: int = 12) -> Dict[int, str]:
+        """构建列号→表头文本的映射，用于列内容识别
+
+        扫描工作表前N行的所有单元格，将每列的文本聚合起来
+
+        Args:
+            worksheet: openpyxl Worksheet对象
+            max_scan_row: 最大扫描行数
+
+        Returns:
+            {col_idx: "聚合后的表头文本小写"} 字典
+        """
+        col_headers: Dict[int, list] = {}
+        for check_row in range(1, min(max_scan_row + 1, worksheet.max_row + 1)):
+            for col_idx in range(1, min(16, worksheet.max_column + 1)):
+                cell_val = worksheet.cell(row=check_row, column=col_idx).value
+                if cell_val and str(cell_val).strip():
+                    val_str = str(cell_val).strip().lower()
+                    if col_idx not in col_headers:
+                        col_headers[col_idx] = []
+                    col_headers[col_idx].append(val_str)
+
+        result = {}
+        for col_idx, headers in col_headers.items():
+            result[col_idx] = " ".join(headers)
+        return result
+
     def _extract_voltage_ripple_groups(
         self,
         worksheet: Worksheet,
         row_idx: int,
         col_mapping: Dict[str, Optional[int]]
     ) -> List[Dict[str, Any]]:
-        """提取电压和纹波分离的测试组【修复Case 1】
+        """提取电压和纹波分离的测试组【修复Case 1 + 纹波阈值修复】
 
         1.1.2 Power Stability表格结构：
         - 电压组：列5(min)=4.75, 列6(typ)=5, 列7(max)=5.25, 列8(data)=5.5
-        - 纹波组：列9(max)=500, 列10(data)=110
+        - 纹波组：列9(criteria/max)=45, 列10(data)=55.6
 
-        关键修复：电压组和纹波组有独立的列，不能混淆
-        列9是纹波criteria，但可能被误识别为电压max
+        关键修复：
+        1. 列9是纹波criteria，不能混淆为电压max
+        2. 纹波criteria值可能<50mV（如20mV、45mV），不能硬编码阈值判断
+        3. 改用表头文本检测判定纹波列
         """
         groups = []
+
+        # 构建表头映射（用于列内容识别）
+        col_headers = self._build_col_header_map(worksheet)
+
+        def _col_has(col_idx: int, keyword: str) -> bool:
+            """检查指定列的表头是否包含关键词"""
+            if col_idx in col_headers:
+                return keyword.lower() in col_headers[col_idx]
+            return False
 
         # 主电压组
         voltage_group = {
@@ -1046,19 +1170,21 @@ class ValidationService:
         # 电压组max应该在data_col之前1列，即 voltage_max_col = data_col - 1
         voltage_max_col = data_col - 1  # 通常是列7
 
-        # 验证：如果max_col识别的值是纹波（>=50），则使用voltage_max_col
-        if col_mapping.get("max_col"):
-            cell = worksheet.cell(row=row_idx, column=col_mapping["max_col"])
-            max_val = self._extract_number(cell.value)
+        # 判断col_mapping["max_col"]列是否为纹波列（通过表头检测）
+        mapped_max_col = col_mapping.get("max_col")
+        is_max_col_ripple = mapped_max_col is not None and (
+            _col_has(mapped_max_col, "ripple") or _col_has(mapped_max_col, "纹波")
+        )
 
-            # 检查max_col是否是纹波criteria（值>=50，纹波通常>=50mV）
-            if max_val is not None and max_val >= 50:
-                # 使用电压max列（data_col之前1列）
-                cell = worksheet.cell(row=row_idx, column=voltage_max_col)
-                voltage_group["max_value"] = self._extract_number(cell.value)
-                logger.debug(f"  【修复】Row{row_idx}: 电压max使用列{voltage_max_col}={voltage_group['max_value']}（列{col_mapping['max_col']}={max_val}是纹波criteria）")
-            else:
-                voltage_group["max_value"] = max_val
+        if mapped_max_col and is_max_col_ripple:
+            # max_col指向的是纹波criteria列，电压max从data_col-1读取
+            cell = worksheet.cell(row=row_idx, column=voltage_max_col)
+            voltage_group["max_value"] = self._extract_number(cell.value)
+            logger.debug(f"  Row{row_idx}: 电压max使用列{voltage_max_col}={voltage_group['max_value']}（列{mapped_max_col}是纹波criteria）")
+        elif mapped_max_col:
+            # max_col是正常电压max列
+            cell = worksheet.cell(row=row_idx, column=mapped_max_col)
+            voltage_group["max_value"] = self._extract_number(cell.value)
 
         # 提取实测值
         if col_mapping.get("data_col"):
@@ -1069,20 +1195,39 @@ class ValidationService:
         if voltage_group["data_value"] is not None or voltage_group["max_value"] is not None:
             groups.append(voltage_group)
 
-        # 纹波组 - 查找纹波相关的列
-        primary_data_col = col_mapping.get("data_col", 8)
+        # 纹波组 - 通过表头扫描查找纹波列
+        # 策略：先找到含"ripple/纹波"关键词的criteria列，纹波data列即criteria列+1
+        ripple_criteria_col = None
+        ripple_data_col = None
 
-        # 尝试查找纹波data列（通常在主data列之后的1-2列）
-        for ripple_data_offset in [2, 3]:
-            ripple_data_col = primary_data_col + ripple_data_offset
-            if ripple_data_col > 14:
-                continue
+        # 扫描列表头（跳过1-4列标签列），找纹波相关列
+        for col_idx in range(5, 15):
+            header = col_headers.get(col_idx, "")
+            if ("ripple" in header or "纹波" in header):
+                # 该列表头含纹波关键词，再看是否同时含criteria/标准关键词
+                if "criteria" in header or "标准" in header:
+                    ripple_criteria_col = col_idx
+                    logger.debug(f"  Row: 识别纹波criteria列: 列{col_idx}")
+                elif "test data" in header or "实测" in header or "测试数据" in header:
+                    ripple_data_col = col_idx
+                    logger.debug(f"  Row: 识别纹波data列: 列{col_idx}")
 
+        # 如果只找到纹波criteria但没找到纹波data，data在criteria+1
+        if ripple_criteria_col and not ripple_data_col:
+            candidate_data_col = ripple_criteria_col + 1
+            if candidate_data_col <= 14:
+                # 验证data候选列表头是否像测试数据
+                data_header = col_headers.get(candidate_data_col, "")
+                if "test data" in data_header or "实测" in data_header or "测试数据" in data_header:
+                    ripple_data_col = candidate_data_col
+                    logger.info(f"  推断纹波data列: 列{ripple_data_col} (criteria列+1, 表头: {data_header[:80]})")
+
+        # 提取纹波数据
+        if ripple_data_col and ripple_data_col <= 14:
             ripple_data_cell = worksheet.cell(row=row_idx, column=ripple_data_col)
             ripple_data_value = self._extract_number(ripple_data_cell.value)
 
             if ripple_data_value is not None:
-                # 找到了纹波数据列
                 ripple_group = {
                     "index": 2,
                     "name": "纹波",
@@ -1092,21 +1237,28 @@ class ValidationService:
                     "data_value": ripple_data_value,
                 }
 
-                # 查找纹波criteria列（在data列之前1-2列）
-                for crit_offset in [1, 2]:
-                    crit_col = ripple_data_col - crit_offset
-                    if crit_col > 0:
-                        crit_cell = worksheet.cell(row=row_idx, column=crit_col)
-                        crit_value = self._extract_number(crit_cell.value)
-
-                        if crit_value is not None:
-                            # 检查这是否真的是纹波criteria（值应该>=50mV）
-                            if crit_value >= 50:
-                                ripple_group["max_value"] = crit_value
-                                break
+                # 提取纹波criteria值
+                if ripple_criteria_col:
+                    crit_cell = worksheet.cell(row=row_idx, column=ripple_criteria_col)
+                    crit_value = self._extract_number(crit_cell.value)
+                    if crit_value is not None:
+                        ripple_group["max_value"] = crit_value
+                        logger.debug(f"  Row{row_idx}: 纹波criteria={crit_value} (列{ripple_criteria_col})")
+                else:
+                    # 回退：criteria列在data列之前
+                    for crit_offset in [1, 2]:
+                        crit_col = ripple_data_col - crit_offset
+                        if crit_col > 0:
+                            crit_cell = worksheet.cell(row=row_idx, column=crit_col)
+                            crit_value = self._extract_number(crit_cell.value)
+                            if crit_value is not None:
+                                # 验证：criteria表头含ripple关键词
+                                if _col_has(crit_col, "ripple") or _col_has(crit_col, "纹波"):
+                                    ripple_group["max_value"] = crit_value
+                                    break
 
                 groups.append(ripple_group)
-                break  # 找到一个纹波组就停止
+                logger.debug(f"  Row{row_idx}: 添加纹波组 data={ripple_data_value}, max={ripple_group['max_value']}")
 
         return groups
 
@@ -1284,14 +1436,24 @@ class ValidationService:
             cell = worksheet.cell(row=row_idx, column=col_mapping["data_col"])
             power_group["data_value"] = self._extract_number(cell.value)
 
-        # 提取min/max值
+        # 提取标准值（功耗标准为上限，放入max_value）
         if col_mapping.get("min_col"):
             cell = worksheet.cell(row=row_idx, column=col_mapping["min_col"])
-            power_group["min_value"] = self._extract_number(cell.value)
+            criteria_val = self._extract_number(cell.value)
+            # 【修复】功耗criteria是上限值（max），不是下限（min）
+            # 只有当没有不等式规则时，才将criteria作为max_value
+            if criteria_val is not None and not power_group.get("inequality_operator"):
+                power_group["max_value"] = criteria_val
+                power_group["min_value"] = None
+                logger.debug(f"  【修复】功耗criteria {criteria_val} 作为上限(max)值")
+            else:
+                power_group["min_value"] = criteria_val
 
         if col_mapping.get("max_col"):
             cell = worksheet.cell(row=row_idx, column=col_mapping["max_col"])
-            power_group["max_value"] = self._extract_number(cell.value)
+            max_val = self._extract_number(cell.value)
+            if max_val is not None and power_group.get("max_value") is None:
+                power_group["max_value"] = max_val
 
         groups.append(power_group)
         return groups
@@ -2358,7 +2520,10 @@ class ValidationService:
 
         # 情况1：既有最小值又有最大值（完整范围）
         if min_value is not None and max_value is not None:
-            in_range = (min_value <= data_value <= max_value)
+            # 【修复】处理倒置范围：当最小值 > 最大值时自动交换
+            actual_min = min(min_value, max_value)
+            actual_max = max(min_value, max_value)
+            in_range = (actual_min <= data_value <= actual_max)
 
             if in_range:
                 if is_fail:
@@ -2371,14 +2536,14 @@ class ValidationService:
                         "max_value": max_value,
                         "result": result_str,
                         "issue_type": "在范围内但判定不合格",
-                        "issue": f"测试值 {data_value} 在标准范围 [{min_value}, {max_value}] 内，但判定为「{result_str}」"
+                        "issue": f"测试值 {data_value} 在标准范围 [{actual_min}, {actual_max}] 内，但判定为「{result_str}」"
                     }
             else:
                 if is_pass:
-                    if data_value < min_value:
-                        range_desc_specific = f"低于最小值 {min_value}"
+                    if data_value < actual_min:
+                        range_desc_specific = f"低于最小值 {actual_min}"
                     else:
-                        range_desc_specific = f"超过最大值 {max_value}"
+                        range_desc_specific = f"超过最大值 {actual_max}"
 
                     return {
                         "sheet": sheet_name,

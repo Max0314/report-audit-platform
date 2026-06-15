@@ -55,7 +55,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.add_middleware(RateLimiter, requests_per_minute=60, burst_size=10)
+app.add_middleware(RateLimiter, requests_per_minute=300, burst_size=60)
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
 

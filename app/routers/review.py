@@ -8,6 +8,7 @@ import io
 import json
 import time
 import asyncio
+import concurrent.futures
 from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
@@ -32,6 +33,15 @@ from app.services import (
 
 logger = get_logger("review_router")
 router = APIRouter(prefix="/api/v1/review", tags=["审核"])
+
+# 并发控制：最多同时处理 2 个审核任务
+MAX_CONCURRENT_TASKS = 2
+review_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+# 线程池用于 CPU 密集型操作
+thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENT_TASKS)
+# 当前活跃任务计数
+_active_tasks = 0
+_active_tasks_lock = asyncio.Lock()
 
 
 # ============ 响应模型 ============
@@ -166,6 +176,17 @@ class ThreadSafeTaskStore:
 review_tasks = ThreadSafeTaskStore(max_tasks=100, ttl_hours=24)
 
 
+@router.get("/queue")
+async def get_queue_info():
+    """获取队列信息"""
+    global _active_tasks
+    return {
+        "active_tasks": _active_tasks,
+        "max_concurrent": MAX_CONCURRENT_TASKS,
+        "queue_size": max(0, _active_tasks - MAX_CONCURRENT_TASKS) if _active_tasks > MAX_CONCURRENT_TASKS else 0
+    }
+
+
 # ============ API 端点 ============
 
 @router.post("/upload", response_model=ReviewUploadResponse)
@@ -210,16 +231,20 @@ async def upload_report(file: UploadFile = File(...)):
         "error": None
     })
 
-    # 触发异步处理
-    import asyncio
-    asyncio.create_task(process_review(task_id))
+    # 触发异步处理（带并发控制）
+    asyncio.create_task(run_review_with_semaphore(task_id))
+
+    # 判断当前负载
+    queue_message = "审核任务已启动"
+    if _active_tasks >= MAX_CONCURRENT_TASKS:
+        queue_message = f"系统繁忙，您的任务已加入队列（当前有 {_active_tasks} 个任务在排队）"
 
     logger.info(f"文件上传成功: {file.filename}, 任务ID: {task_id}")
 
     return ReviewUploadResponse(
         task_id=task_id,
         filename=file.filename,
-        message="文件上传成功，审核任务已启动"
+        message=queue_message
     )
 
 
@@ -317,6 +342,29 @@ async def export_review_report(task_id: str):
         raise HTTPException(status_code=500, detail=f"导出报告失败: {str(e)}")
 
 
+async def run_review_with_semaphore(task_id: str):
+    """带并发控制的审核任务运行器"""
+    global _active_tasks
+    
+    async with _active_tasks_lock:
+        _active_tasks += 1
+        logger.info(f"[并发] 活跃任务数: {_active_tasks}/{MAX_CONCURRENT_TASKS}")
+    
+    async with review_semaphore:
+        try:
+            await process_review(task_id)
+        finally:
+            async with _active_tasks_lock:
+                _active_tasks -= 1
+                logger.info(f"[并发] 活跃任务数: {_active_tasks}/{MAX_CONCURRENT_TASKS}")
+
+
+async def run_cpu_bound(func, *args, **kwargs):
+    """在线程池中运行CPU密集型任务"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(thread_pool, lambda: func(*args, **kwargs))
+
+
 async def process_review(task_id: str):
     """处理审核任务"""
     task = review_tasks.get_task(task_id)
@@ -337,53 +385,54 @@ async def process_review(task_id: str):
     await asyncio.sleep(0.3)
 
     try:
-        # 步骤1: 文件解析
+        # 步骤1: 文件解析（CPU密集型）
         await update_progress_slow(10, "正在解析Excel文件...")
         parser = ExcelParser()
-        parser.load_from_file(task["file_path"])
+        await run_cpu_bound(parser.load_from_file, task["file_path"])
         sheet_names = parser.get_sheet_names()
 
         await update_progress_slow(15, f"解析完成，共 {len(sheet_names)} 个 Sheet")
 
-        # 步骤2: 数据提取
+        # 步骤2: 数据提取（CPU密集型）
         await update_progress_slow(20, "正在提取数据...")
-        text_content = parser.extract_text_content()
-        key_info = parser.extract_key_info()
-        dates = parser.extract_dates()
-        sheets_data = parser.read_all_sheets()
+        text_content = await run_cpu_bound(parser.extract_text_content)
+        key_info = await run_cpu_bound(parser.extract_key_info)
+        dates = await run_cpu_bound(parser.extract_dates)
+        sheets_data = await run_cpu_bound(parser.read_all_sheets)
 
         await update_progress_slow(25, "数据提取完成")
 
-        # 步骤3: 项目基础信息
+        # 步骤3: 项目基础信息（CPU密集型）
         await update_progress_slow(30, "正在提取项目基础信息...")
-        project_info = validation_service.extract_project_info(sheets_data)
+        project_info = await run_cpu_bound(validation_service.extract_project_info, sheets_data)
 
         # 步骤4: 日期校验
         await update_progress_slow(35, "正在验证日期...")
-        date_validation = validation_service.validate_dates(dates)
+        date_validation = await run_cpu_bound(validation_service.validate_dates, dates)
 
         await update_progress_slow(40, "日期验证完成")
 
         # 步骤5: 关键信息一致性校验
         await update_progress_slow(45, "正在验证关键信息一致性...")
-        consistency_validation = validation_service.validate_key_info_consistency(key_info)
+        consistency_validation = await run_cpu_bound(validation_service.validate_key_info_consistency, key_info)
 
-        # 步骤6: 公司信息一致性校验 (新增)
+        # 步骤6: 公司信息一致性校验
         await update_progress_slow(50, "正在验证公司信息一致性...")
-        company_info_validation = validation_service.validate_company_info(sheets_data)
+        company_info_validation = await run_cpu_bound(validation_service.validate_company_info, sheets_data)
 
-        # 步骤7: 测试值逻辑校验
+        # 步骤7: 测试值逻辑校验（最重CPU操作）
         await update_progress_slow(55, "正在验证测试值逻辑...")
-        value_logic_validation = validation_service.validate_test_value_logic(
+        value_logic_validation = await run_cpu_bound(
+            validation_service.validate_test_value_logic,
             sheets_data,
             workbook_path=task["file_path"]
         )
 
         # 步骤8: 提取测试项
         await update_progress_slow(65, "正在提取测试项...")
-        test_items_result = validation_service.extract_test_items(sheets_data)
+        test_items_result = await run_cpu_bound(validation_service.extract_test_items, sheets_data)
 
-        # 步骤9: AI智能分类
+        # 步骤9: AI智能分类（网络I/O，但也在线程池执行避免阻塞）
         ai_classification = {
             "available": False,
             "categories": {},
@@ -395,7 +444,8 @@ async def process_review(task_id: str):
             await update_progress_slow(70, "正在进行 AI 智能分类...")
 
             try:
-                ai_classification = ai_checker.classify_test_items(
+                ai_classification = await run_cpu_bound(
+                    ai_checker.classify_test_items,
                     test_items_result["items"],
                     product_type=None
                 )
@@ -405,7 +455,8 @@ async def process_review(task_id: str):
 
         # 步骤10: 测试完整性校验
         await update_progress_slow(75, "正在验证测试完整性...")
-        completeness_validation = validation_service.validate_test_completeness(
+        completeness_validation = await run_cpu_bound(
+            validation_service.validate_test_completeness,
             sheets_data,
             ai_classification=ai_classification
         )
@@ -423,7 +474,7 @@ async def process_review(task_id: str):
             await update_progress_slow(85, "正在进行 AI 错别字检查...")
 
             try:
-                ai_result = ai_checker.check_text(text_content)
+                ai_result = await run_cpu_bound(ai_checker.check_text, text_content)
                 ai_result["available"] = True
             except AIException as e:
                 ai_result["error"] = str(e)
