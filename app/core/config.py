@@ -25,6 +25,9 @@ class ServerSettings(BaseSettings):
     env: str = Field(default="development", description="运行环境")
     debug: bool = Field(default=True, description="调试模式")
 
+    class Config:
+        env_prefix = "SERVER_"
+
 
 class AIServiceSettings(BaseSettings):
     """AI 服务配置"""
@@ -48,6 +51,40 @@ class FileStorageSettings(BaseSettings):
     archive_dir: str = Field(default="./data/archive", description="归档目录")
     max_file_size: int = Field(default=100 * 1024 * 1024, description="最大文件大小（字节）")
     allowed_extensions: list = Field(default=[".xlsx", ".xls", ".xlsm"], description="允许的文件扩展名")
+
+
+class ObjectStorageSettings(BaseSettings):
+    """业务文件持久化配置（生产环境必须为 OSS）。"""
+    backend: str = Field(
+        default="local",
+        validation_alias="STORAGE_BACKEND",
+        description="local / oss",
+    )
+    endpoint: str = Field(default="", description="OSS endpoint")
+    bucket: str = Field(default="", description="OSS bucket")
+    access_key_id: str = Field(default="", description="OSS AccessKey ID")
+    access_key_secret: str = Field(default="", description="OSS AccessKey Secret")
+    prefix: str = Field(default="", description="本服务独占的 OSS key 前缀")
+
+    class Config:
+        env_prefix = "OSS_"
+
+
+class HardwareAuthSettings(BaseSettings):
+    """复用硬件门户会话的配置。"""
+    enabled: bool = Field(default=False, description="是否启用硬件门户会话校验")
+    internal_url: str = Field(default="", description="htmlsystm 容器内 URL")
+    internal_secret: str = Field(default="", description="内部会话校验密钥")
+    login_url: str = Field(default="/neo_hardware/login", description="未登录页面跳转地址")
+    public_prefix: str = Field(
+        default="/neo_hardware/report-audit",
+        description="报告审核平台的外部路径前缀",
+    )
+    timeout_seconds: float = Field(default=10.0, description="会话校验超时")
+    cache_ttl_seconds: float = Field(default=10.0, description="成功校验缓存时间")
+
+    class Config:
+        env_prefix = "HARDWARE_AUTH_"
 
 
 class ValidationRulesSettings(BaseSettings):
@@ -122,6 +159,8 @@ class Settings(BaseSettings):
     server: ServerSettings = Field(default_factory=ServerSettings)
     ai_service: AIServiceSettings = Field(default_factory=AIServiceSettings)
     file_storage: FileStorageSettings = Field(default_factory=FileStorageSettings)
+    object_storage: ObjectStorageSettings = Field(default_factory=ObjectStorageSettings)
+    hardware_auth: HardwareAuthSettings = Field(default_factory=HardwareAuthSettings)
     validation_rules: ValidationRulesSettings = Field(default_factory=ValidationRulesSettings)
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
 

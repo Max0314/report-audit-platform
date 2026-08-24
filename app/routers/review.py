@@ -9,11 +9,12 @@ import json
 import time
 import asyncio
 import concurrent.futures
+import secrets
 from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
 
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -30,6 +31,9 @@ from app.services import (
     AIChecker,
     validation_service,
 )
+from app.auth import current_user_key, require_task_owner
+from app.object_store import ObjectStoreError
+from app.storage import persist_upload, rollback_objects, safe_filename
 
 logger = get_logger("review_router")
 router = APIRouter(prefix="/api/v1/review", tags=["审核"])
@@ -190,12 +194,13 @@ async def get_queue_info():
 # ============ API 端点 ============
 
 @router.post("/upload", response_model=ReviewUploadResponse)
-async def upload_report(file: UploadFile = File(...)):
+async def upload_report(request: Request, file: UploadFile = File(...)):
     """上传测试报告文件"""
     settings = get_settings()
 
     # 验证文件类型
-    file_ext = Path(file.filename).suffix.lower()
+    filename = safe_filename(file.filename or "upload.xlsx")
+    file_ext = Path(filename).suffix.lower()
     if file_ext not in settings.file_storage.allowed_extensions:
         raise InvalidFileExtensionException(
             file_ext,
@@ -211,20 +216,33 @@ async def upload_report(file: UploadFile = File(...)):
         )
 
     # 生成任务 ID
-    task_id = f"review_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    task_id = f"review_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(6)}"
 
-    # 保存文件
-    file_path = Path(settings.file_storage.upload_dir) / f"{task_id}_{file.filename}"
-    file_path.parent.mkdir(parents=True, exist_ok=True)
+    # OSS 是生产持久层；必须在本地解析和后台任务启动前写入成功。
+    try:
+        object_key = await persist_upload("review", task_id, filename, contents)
+    except ObjectStoreError as exc:
+        logger.error("审核原文件写入 OSS 失败: task_id=%s, error=%s", task_id, type(exc).__name__)
+        raise HTTPException(status_code=503, detail="文件持久化失败，请稍后重试") from exc
 
-    with open(file_path, "wb") as f:
-        f.write(contents)
+    # 本地文件只作为解析缓存。
+    file_path = Path(settings.file_storage.upload_dir) / f"{task_id}_{filename}"
+
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "wb") as f:
+            f.write(contents)
+    except OSError as exc:
+        await rollback_objects([object_key])
+        raise HTTPException(status_code=503, detail="本地解析缓存写入失败") from exc
 
     # 初始化任务
     review_tasks.create_task(task_id, {
         "status": "processing",
-        "filename": file.filename,
+        "filename": filename,
         "file_path": str(file_path),
+        "object_key": object_key,
+        "owner_key": current_user_key(request),
         "progress": 5,
         "message": "任务已创建，正在准备解析...",
         "result": None,
@@ -239,22 +257,23 @@ async def upload_report(file: UploadFile = File(...)):
     if _active_tasks >= MAX_CONCURRENT_TASKS:
         queue_message = f"系统繁忙，您的任务已加入队列（当前有 {_active_tasks} 个任务在排队）"
 
-    logger.info(f"文件上传成功: {file.filename}, 任务ID: {task_id}")
+    logger.info("审核文件已持久化并创建任务: task_id=%s", task_id)
 
     return ReviewUploadResponse(
         task_id=task_id,
-        filename=file.filename,
+        filename=filename,
         message=queue_message
     )
 
 
 @router.get("/status/{task_id}", response_model=ReviewStatusResponse)
-async def get_review_status(task_id: str):
+async def get_review_status(request: Request, task_id: str):
     """获取审核任务状态"""
     task = review_tasks.get_task(task_id)
 
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    require_task_owner(request, task)
 
     return ReviewStatusResponse(
         task_id=task_id,
@@ -265,12 +284,13 @@ async def get_review_status(task_id: str):
 
 
 @router.get("/result/{task_id}")
-async def get_review_result(task_id: str):
+async def get_review_result(request: Request, task_id: str):
     """获取审核结果"""
     task = review_tasks.get_task(task_id)
 
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    require_task_owner(request, task)
 
     if task["status"] == "processing":
         return JSONResponse(
@@ -304,7 +324,7 @@ async def check_ai_available():
 
 
 @router.get("/export/{task_id}")
-async def export_review_report(task_id: str):
+async def export_review_report(request: Request, task_id: str):
     """导出审核报告"""
     from app.services import export_service
 
@@ -312,6 +332,7 @@ async def export_review_report(task_id: str):
 
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    require_task_owner(request, task)
 
     if task["status"] != "completed":
         raise HTTPException(status_code=400, detail="任务未完成，无法导出报告")
@@ -384,6 +405,7 @@ async def process_review(task_id: str):
     )
     await asyncio.sleep(0.3)
 
+    parser = None
     try:
         # 步骤1: 文件解析（CPU密集型）
         await update_progress_slow(10, "正在解析Excel文件...")
@@ -536,8 +558,6 @@ async def process_review(task_id: str):
 
         logger.info(f"审核任务完成: {task_id}, 发现 {total_issues} 个问题")
 
-        parser.close()
-
     except Exception as e:
         logger.error(f"审核任务失败: {task_id}, 错误: {str(e)}")
         import traceback
@@ -547,6 +567,17 @@ async def process_review(task_id: str):
             error=str(e),
             message="审核失败"
         )
+    finally:
+        if parser is not None:
+            try:
+                parser.close()
+            except Exception:
+                pass
+        # OSS 是唯一持久副本；任务处理结束后本地上传仅是可删除缓存。
+        try:
+            Path(task["file_path"]).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("本地解析缓存清理失败: task_id=%s, error=%s", task_id, type(exc).__name__)
 
 
 # ============ 辅助函数 ============

@@ -21,7 +21,8 @@ AIGC:
 - **双入口设计**：智能报告审核 / 测数聚合分析
 - **AI 能力集成**：DeepSeek API 实现错别字与语义检测
 - **高度可拓展**：模块化设计、配置与代码分离
-- **本地部署**：数据纯本地处理，保护隐私
+- **私有持久化**：生产原文件写通到阿里云 OSS，本地卷只作解析缓存
+- **统一登录**：复用硬件门户的 `session_id` 会话和 CSRF 防护
 
 ## 技术栈
 
@@ -36,7 +37,7 @@ AIGC:
 ```bash
 # 1. 创建配置
 cp .env.example .env
-# 填写 AI_API_KEY 等配置；生产环境将 .env 权限设为 600
+# 本地开发可设置 STORAGE_BACKEND=local、HARDWARE_AUTH_ENABLED=false
 
 # 2. 安装依赖
 pip install -r requirements.txt
@@ -48,13 +49,19 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 # 浏览器打开 http://localhost:8000
 ```
 
-Docker 启动：
+NeoFlow 生产部署：
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+# 填写 AI、OSS、硬件门户内部会话校验配置，并确保权限为 600
+chmod 600 .env
+bash scripts/deploy.sh
 curl -fsS http://127.0.0.1:39023/health
 ```
+
+生产入口为 `/neo_hardware/report-audit/`。Compose 仍发布
+`127.0.0.1:39023` 供本机探活，但门户流量通过共享 Docker 网络进入服务，
+TLS 继续由 NeoFlow 平台 Nginx 统一终止。
 
 NeoFlow 的迁移、数据备份、切流、回滚和旧目录删除条件见
 [`docs/neoflow-migration.md`](docs/neoflow-migration.md)。
@@ -73,7 +80,8 @@ NeoFlow 的迁移、数据备份、切流、回滚和旧目录删除条件见
 │   └── lib/               # 第三方库
 ├── templates/             # HTML模板
 ├── config/                # 配置文件
-├── data/                  # 数据目录
+├── scripts/               # 部署与历史文件迁移工具
+├── data/                  # 本地解析缓存（不作为生产持久层）
 ├── docker-compose.yml     # 独立 Compose 入口
 └── requirements.txt      # Python依赖
 ```

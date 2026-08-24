@@ -21,6 +21,8 @@ services:
     volumes:
       - report-audit-data:/app/data
       - report-audit-logs:/app/logs
+    networks:
+      - report_audit_internal
     healthcheck:
       test: ["CMD", "python", "/app/health_check.py"]
       interval: 30s
@@ -31,3 +33,8 @@ services:
 volumes:
   report-audit-data:
   report-audit-logs:
+
+networks:
+  report_audit_internal:
+    external: true
+    name: neo-hardware-report-audit

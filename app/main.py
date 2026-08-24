@@ -5,16 +5,19 @@ FastAPI 后端入口
 """
 
 from contextlib import asynccontextmanager
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from app.core import get_logger, get_settings, init_directories, BaseAPIException
 from app.routers import review_router, analysis_router
 from app.middleware import RateLimiter
+from app.auth import close_auth_client, hardware_auth_middleware, validate_auth_config
+from app.storage import check_storage_ready
 
 logger = get_logger("main")
 
@@ -30,34 +33,41 @@ async def lifespan(app: FastAPI):
 
     # 加载配置
     settings = get_settings()
+    if settings.server.env.lower() == "production":
+        if settings.object_storage.backend.lower() != "oss":
+            raise RuntimeError("生产环境 STORAGE_BACKEND 必须为 oss")
+        if settings.object_storage.prefix.strip("/") != "prod/report-audit":
+            raise RuntimeError("生产环境 OSS_PREFIX 必须为 prod/report-audit")
+    validate_auth_config()
+    await check_storage_ready()
     logger.info(f"配置加载完成，服务器端口: {settings.server.port}")
 
     yield
 
-    # 关闭时执行
+    await close_auth_client()
     logger.info("应用关闭中...")
 
 
 # 创建 FastAPI 应用
+_startup_settings = get_settings()
+_production = _startup_settings.server.env.lower() == "production"
+
 app = FastAPI(
     title="硬件研发部测试报告审核平台",
     description="智能测试报告审核与数据分析系统",
     version="1.2.0",
-    lifespan=lifespan
-)
-
-# 配置 CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    lifespan=lifespan,
+    docs_url=None if _production else "/docs",
+    redoc_url=None if _production else "/redoc",
+    openapi_url=None if _production else "/openapi.json",
 )
 
 app.add_middleware(RateLimiter, requests_per_minute=300, burst_size=60)
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# 报告服务不维护第二套账号，所有页面和 API 都复用 htmlsystm 的会话。
+app.middleware("http")(hardware_auth_middleware)
 
 
 # ============ 静态文件缓存 ============
@@ -79,6 +89,12 @@ app.mount("/static", CacheStaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
+def _template_context(request: Request) -> dict:
+    settings = get_settings()
+    base_path = settings.hardware_auth.public_prefix.rstrip("/") if settings.hardware_auth.enabled else ""
+    return {"request": request, "base_path": base_path}
+
+
 # ============ 页面路由 ============
 
 @app.get("/", response_class=HTMLResponse)
@@ -86,7 +102,7 @@ async def index(request: Request):
     """首页 - 入口选择"""
     return templates.TemplateResponse(
         "index.html",
-        {"request": request}
+        _template_context(request),
     )
 
 
@@ -95,7 +111,7 @@ async def review_page(request: Request):
     """入口A - 智能报告审核与校验系统"""
     return templates.TemplateResponse(
         "review.html",
-        {"request": request}
+        _template_context(request),
     )
 
 
@@ -104,7 +120,7 @@ async def analysis_page(request: Request):
     """入口B - 测数聚合智能分析系统"""
     return templates.TemplateResponse(
         "analysis.html",
-        {"request": request}
+        _template_context(request),
     )
 
 
@@ -133,32 +149,12 @@ async def favicon():
 
 @app.get("/health")
 async def health_check():
-    """健康检查"""
-    import psutil
-    import gc
-
-    process = psutil.Process()
-    memory_info = process.memory_info()
-
-    gc.collect()
-    memory_data = {
-        "rss_mb": round(memory_info.rss / 1024 / 1024, 2),
-        "vms_mb": round(memory_info.vms / 1024 / 1024, 2),
-    }
-
-    cpu_percent = process.cpu_percent(interval=0.1)
-
+    """公开的轻量存活探针；不泄露主机资源和存储凭据。"""
     return {
         "status": "healthy",
-        "message": "服务运行正常",
-        "system": {
-            "cpu_percent": round(cpu_percent, 2),
-            "memory": memory_data,
-            "threads": process.num_threads(),
-        },
-        "gc": {
-            "collections": gc.get_count(),
-        }
+        "service": "report-audit-platform",
+        "storage": (os.getenv("STORAGE_BACKEND") or "local").strip().lower(),
+        "hardware_auth": get_settings().hardware_auth.enabled,
     }
 
 
@@ -216,13 +212,15 @@ async def api_exception_handler(request: Request, exc: BaseAPIException):
 async def general_exception_handler(request: Request, exc: Exception):
     """通用异常处理"""
     logger.error(f"未处理的异常: {str(exc)}")
+    content = {
+        "code": 500,
+        "message": "服务器内部错误",
+    }
+    if not _production:
+        content["details"] = {"error": str(exc)}
     return JSONResponse(
         status_code=500,
-        content={
-            "code": 500,
-            "message": "服务器内部错误",
-            "details": {"error": str(exc)}
-        }
+        content=content,
     )
 
 

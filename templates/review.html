@@ -4,21 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智能报告审核 - 硬件研发部测试报告审核平台</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="{{ base_path }}/static/css/style.css">
+    <script src="{{ base_path }}/static/js/auth.js"></script>
 </head>
 <body>
     <!-- 顶部导航 -->
     <header class="header">
         <div class="container">
             <div class="header-content">
-                <a href="/" class="logo">
-                    <img src="/static/images/logo.jpg" alt="Logo" class="logo-img">
+                <a href="{{ base_path }}/" class="logo">
+                    <img src="{{ base_path }}/static/images/logo.jpg" alt="Logo" class="logo-img">
                     <span class="logo-text">硬件研发部测试报告审核平台</span>
                 </a>
                 <nav class="nav">
-                    <a href="/" class="nav-link">首页</a>
-                    <a href="/review" class="nav-link active">智能审核</a>
-                    <a href="/analysis" class="nav-link">智能分析</a>
+                    <a href="{{ base_path }}/" class="nav-link">首页</a>
+                    <a href="{{ base_path }}/review" class="nav-link active">智能审核</a>
+                    <a href="{{ base_path }}/analysis" class="nav-link">智能分析</a>
                 </nav>
             </div>
         </div>
@@ -426,7 +427,8 @@
                 resetUpload();
             });
 
-            xhr.open('POST', '/api/v1/review/upload', true);
+            xhr.open('POST', window.ReportAudit.url('/api/v1/review/upload'), true);
+            xhr.setRequestHeader('X-CSRF-Token', window.ReportAudit.csrfToken());
             xhr.send(formData);
         }
 
@@ -442,7 +444,7 @@
             (async () => {
                 try {
                     console.log('[轮询] 立即请求第一次状态');
-                    const response = await fetch(`/api/v1/review/status/${currentTaskId}`);
+                    const response = await fetch(window.ReportAudit.url(`/api/v1/review/status/${currentTaskId}`));
                     const data = await response.json();
                     console.log('[轮询] 第一次状态:', data.status, '进度:', data.progress, '消息:', data.message);
                     updateProgress(data.progress, data.message);
@@ -464,7 +466,7 @@
 
             pollingInterval = setInterval(async () => {
                 try {
-                    const response = await fetch(`/api/v1/review/status/${currentTaskId}`);
+                    const response = await fetch(window.ReportAudit.url(`/api/v1/review/status/${currentTaskId}`));
 
                     if (!response.ok) {
                         console.error('[轮询] 请求失败:', response.status);
@@ -636,7 +638,7 @@
         // 显示结果
         async function showResult() {
             try {
-                const response = await fetch(`/api/v1/review/result/${currentTaskId}`);
+                const response = await fetch(window.ReportAudit.url(`/api/v1/review/result/${currentTaskId}`));
                 const result = await response.json();
 
                 // 显示结果区域
@@ -942,7 +944,7 @@
             btn.disabled = true;
 
             // 调用导出API
-            window.open(`/api/v1/review/export/${currentTaskId}`, '_blank');
+            window.open(window.ReportAudit.url(`/api/v1/review/export/${currentTaskId}`), '_blank');
 
             // 恢复按钮状态
             setTimeout(() => {

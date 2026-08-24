@@ -10,12 +10,14 @@
 
 import io
 import json
+import secrets
+import shutil
 from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
 import asyncio
 
-from fastapi import APIRouter, File, UploadFile, HTTPException
+from fastapi import APIRouter, File, UploadFile, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -32,6 +34,9 @@ from app.services.analysis_service_v2 import (
     AnalysisResult,
     AnalysisStage
 )
+from app.auth import current_user_key, require_task_owner
+from app.object_store import ObjectStoreError
+from app.storage import persist_upload, rollback_objects, safe_filename
 
 logger = get_logger("analysis_router")
 router = APIRouter(prefix="/api/v1/analysis", tags=["分析"])
@@ -77,7 +82,7 @@ analysis_tasks = {}
 
 
 @router.post("/upload", response_model=AnalysisUploadResponse)
-async def upload_reports(files: List[UploadFile] = File(...)):
+async def upload_reports(request: Request, files: List[UploadFile] = File(...)):
     """批量上传测试报告文件"""
     settings = get_settings()
 
@@ -85,7 +90,7 @@ async def upload_reports(files: List[UploadFile] = File(...)):
         raise HTTPException(status_code=400, detail="请至少上传一个文件")
 
     # 生成任务 ID
-    task_id = f"analysis_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    task_id = f"analysis_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(6)}"
 
     # 验证并保存文件
     file_contents = []
@@ -93,7 +98,8 @@ async def upload_reports(files: List[UploadFile] = File(...)):
 
     for file in files:
         # 验证文件类型
-        file_ext = Path(file.filename).suffix.lower()
+        filename = safe_filename(file.filename or "upload.xlsx")
+        file_ext = Path(filename).suffix.lower()
         if file_ext not in settings.file_storage.allowed_extensions:
             logger.warning(f"跳过无效文件类型: {file_ext}")
             continue
@@ -103,23 +109,40 @@ async def upload_reports(files: List[UploadFile] = File(...)):
 
         # 验证文件大小
         if len(contents) > settings.file_storage.max_file_size:
-            logger.warning(f"跳过过大文件: {file.filename}")
+            logger.warning("跳过过大文件: task_id=%s", task_id)
             continue
 
         file_contents.append(contents)
-        valid_filenames.append(file.filename)
+        valid_filenames.append(filename)
 
     if len(file_contents) == 0:
         raise HTTPException(status_code=400, detail="没有有效的文件")
 
-    # 保存到临时目录
-    temp_dir = Path(settings.file_storage.temp_dir) / task_id
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    # 先将所有原文件写入 OSS。任一失败就补偿删除本批已写对象，不启动分析。
+    object_keys = []
+    try:
+        for index, (filename, contents) in enumerate(zip(valid_filenames, file_contents), start=1):
+            object_keys.append(
+                await persist_upload("analysis", task_id, filename, contents, index=index)
+            )
+    except ObjectStoreError as exc:
+        await rollback_objects(object_keys)
+        logger.error("分析原文件写入 OSS 失败: task_id=%s, error=%s", task_id, type(exc).__name__)
+        raise HTTPException(status_code=503, detail="文件持久化失败，请稍后重试") from exc
 
-    for filename, contents in zip(valid_filenames, file_contents):
-        file_path = temp_dir / filename
-        with open(file_path, "wb") as f:
-            f.write(contents)
+    # 保存到临时解析缓存
+    temp_dir = Path(settings.file_storage.temp_dir) / task_id
+
+    try:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        for index, (filename, contents) in enumerate(zip(valid_filenames, file_contents), start=1):
+            file_path = temp_dir / f"{index:03d}-{filename}"
+            with open(file_path, "wb") as f:
+                f.write(contents)
+    except OSError as exc:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        await rollback_objects(object_keys)
+        raise HTTPException(status_code=503, detail="本地解析缓存写入失败") from exc
 
     # 初始化任务
     analysis_tasks[task_id] = {
@@ -127,6 +150,8 @@ async def upload_reports(files: List[UploadFile] = File(...)):
         "files": valid_filenames,
         "file_contents": file_contents,
         "temp_dir": str(temp_dir),
+        "object_keys": object_keys,
+        "owner_key": current_user_key(request),
         "progress": 0,
         "result": None,
         "error": None,
@@ -146,12 +171,13 @@ async def upload_reports(files: List[UploadFile] = File(...)):
 
 
 @router.get("/status/{task_id}", response_model=AnalysisStatusResponse)
-async def get_analysis_status(task_id: str):
+async def get_analysis_status(request: Request, task_id: str):
     """获取分析任务状态"""
     if task_id not in analysis_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
 
     task = analysis_tasks[task_id]
+    require_task_owner(request, task)
 
     return AnalysisStatusResponse(
         task_id=task_id,
@@ -162,12 +188,13 @@ async def get_analysis_status(task_id: str):
 
 
 @router.get("/result/{task_id}")
-async def get_analysis_result(task_id: str):
+async def get_analysis_result(request: Request, task_id: str):
     """获取分析结果"""
     if task_id not in analysis_tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
 
     task = analysis_tasks[task_id]
+    require_task_owner(request, task)
 
     if task["status"] == "processing":
         return JSONResponse(
@@ -352,3 +379,8 @@ async def process_analysis(task_id: str):
         task["status"] = "error"
         task["error"] = str(e)
         task["message"] = "分析失败"
+
+    finally:
+        # 原文件已持久化至 OSS，释放内存和本地临时解析缓存。
+        task.pop("file_contents", None)
+        shutil.rmtree(task.get("temp_dir", ""), ignore_errors=True)
