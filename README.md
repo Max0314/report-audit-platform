@@ -34,18 +34,30 @@ AIGC:
 ## 快速开始
 
 ```bash
-# 1. 安装依赖
+# 1. 创建配置
+cp .env.example .env
+# 填写 AI_API_KEY 等配置；生产环境将 .env 权限设为 600
+
+# 2. 安装依赖
 pip install -r requirements.txt
 
-# 2. 配置 DeepSeek API
-# 编辑 config/settings.yaml 设置 API Key
-
-# 3. 启动服务
+# 3. 本地启动服务
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 # 4. 访问平台
 # 浏览器打开 http://localhost:8000
 ```
+
+Docker 启动：
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+curl -fsS http://127.0.0.1:39023/health
+```
+
+NeoFlow 的迁移、数据备份、切流、回滚和旧目录删除条件见
+[`docs/neoflow-migration.md`](docs/neoflow-migration.md)。
 
 ## 目录结构
 
@@ -62,6 +74,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ├── templates/             # HTML模板
 ├── config/                # 配置文件
 ├── data/                  # 数据目录
+├── docker-compose.yml     # 独立 Compose 入口
 └── requirements.txt      # Python依赖
 ```
 

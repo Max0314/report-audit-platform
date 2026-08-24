@@ -1,0 +1,33 @@
+name: report-audit-platform
+
+services:
+  report-audit-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: report-audit-platform:prod
+    container_name: report-audit-platform
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8000
+      SERVER_ENV: production
+      SERVER_DEBUG: "false"
+    ports:
+      - "127.0.0.1:${REPORT_AUDIT_PUBLISH_PORT:-39023}:8000"
+    volumes:
+      - report-audit-data:/app/data
+      - report-audit-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "/app/health_check.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  report-audit-data:
+  report-audit-logs:
