@@ -14,6 +14,14 @@ from app.core import get_logger, get_settings, AIException, AIServiceUnavailable
 logger = get_logger("ai_checker")
 
 
+def build_thinking_extra_body(provider: str, enabled: bool) -> Dict[str, Any]:
+    """构造思考参数，不指定 NeoFlow 上游供应商。"""
+    normalized = (provider or "").strip().casefold().replace("-", "_")
+    if normalized in {"neoflow", "neoflow_token_plan"}:
+        return {"enable_thinking": bool(enabled)}
+    return {"enable_thinking": True} if enabled else {}
+
+
 class AIChecker:
     """AI 检查器
 
@@ -58,7 +66,7 @@ class AIChecker:
             检查结果
         """
         if not self.is_available():
-            raise AIServiceUnavailableException("AI 服务未配置，请先设置 DeepSeek API Key")
+            raise AIServiceUnavailableException("AI 服务未配置，请先设置 AI 服务 API Key")
 
         if check_types is None:
             check_types = ["spell", "terminology"]
@@ -111,9 +119,11 @@ class AIChecker:
                 "max_tokens": self.config.max_tokens
             }
             
-            # 如果启用深度思考，添加额外参数
-            if self.config.enable_thinking:
-                api_kwargs["extra_body"] = {"enable_thinking": True}
+            extra_body = build_thinking_extra_body(
+                self.config.provider, self.config.enable_thinking
+            )
+            if extra_body:
+                api_kwargs["extra_body"] = extra_body
             
             response = self.client.chat.completions.create(**api_kwargs)
 
@@ -277,8 +287,11 @@ class AIChecker:
                 "max_tokens": 2000
             }
             
-            if self.config.enable_thinking:
-                api_kwargs["extra_body"] = {"enable_thinking": True}
+            extra_body = build_thinking_extra_body(
+                self.config.provider, self.config.enable_thinking
+            )
+            if extra_body:
+                api_kwargs["extra_body"] = extra_body
             
             response = self.client.chat.completions.create(**api_kwargs)
 
@@ -402,8 +415,11 @@ class AIChecker:
                 "max_tokens": 2000
             }
             
-            if self.config.enable_thinking:
-                api_kwargs["extra_body"] = {"enable_thinking": True}
+            extra_body = build_thinking_extra_body(
+                self.config.provider, self.config.enable_thinking
+            )
+            if extra_body:
+                api_kwargs["extra_body"] = extra_body
             
             response = self.client.chat.completions.create(**api_kwargs)
 

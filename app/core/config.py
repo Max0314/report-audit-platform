@@ -31,10 +31,13 @@ class ServerSettings(BaseSettings):
 
 class AIServiceSettings(BaseSettings):
     """AI 服务配置"""
-    provider: str = Field(default="dashscope", description="AI 服务提供商 (deepseek/dashscope)")
+    provider: str = Field(
+        default="neoflow",
+        description="AI 服务提供商 (neoflow/deepseek/dashscope)",
+    )
     api_key: str = Field(default="", description="API Key")
-    base_url: str = Field(default="https://dashscope.aliyuncs.com/compatible-mode/v1", description="API 基础 URL")
-    model: str = Field(default="deepseek-v4-flash", description="模型名称")
+    base_url: str = Field(default="https://neoflow.neo-net.com/api/v1", description="API 基础 URL")
+    model: str = Field(default="deepseek/deepseek-v4-pro", description="模型名称")
     temperature: float = Field(default=0.1, description="温度参数")
     max_tokens: int = Field(default=4000, description="最大 Token 数")
     timeout: int = Field(default=120, description="超时时间（秒）")
