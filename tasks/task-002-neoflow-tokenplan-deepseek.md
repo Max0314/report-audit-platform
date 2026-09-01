@@ -5,7 +5,7 @@
 - 交付分支：`fix/task-002-neoflow-tokenplan-deepseek`
 - Worktree：`D:\code_CPL\.codex-worktrees\report-audit-neoflow-tokenplan`
 - 基线：`origin/main` `53ac242`
-- 当前状态：未提交
+- 当前状态：已合入 main
 
 ## 目标
 
