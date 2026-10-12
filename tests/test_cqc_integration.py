@@ -71,6 +71,7 @@ class RulesRegressionTests(unittest.TestCase):
         self.assertEqual(result["fields"]["样品型号"]["value"], "SYNTHETIC-TEST-01")
         self.assertEqual(result["page_count"], 2)
         self.assertEqual(len(result["changes"]), 1)
+        self.assertTrue(any("型号等其他文本不能视为证书号" in warning for warning in result["warnings"]))
         content = cqc.export_workbook({"value": '=HYPERLINK("http://example.invalid")'})
         workbook = load_workbook(io.BytesIO(content))
         self.assertEqual(workbook.active["B2"].data_type, "s")

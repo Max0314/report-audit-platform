@@ -163,7 +163,10 @@ print('SMOKE_JSON:'+json.dumps({'owner_hash':hashlib.sha256(str(key).encode()).h
         result = json.loads(body)
         if mode == "analysis":
             check(result["summary"]["total_records"] == 3 and bool(result["charts"]), "existing aggregation and charts")
+            check(any("box" in name for name in result["charts"]), "existing box chart")
         else:
+            ai_result = result["details"]["ai_result"]
+            check(ai_result.get("available") and not ai_result.get("error"), "existing real AI review")
             code, body, _ = request(f"/api/v1/review/export/{task_id}", owner)
             check(code == 200 and body.startswith(b"PK"), "existing review export")
         check(request(f"/api/v1/{mode}/result/{task_id}", other)[0] == 404, "existing owner isolation " + mode)
