@@ -12,7 +12,6 @@ from openpyxl import load_workbook
 
 from app.auth import hardware_auth_middleware
 from app.routers import cqc
-from app.services.cqc_ai import analyze_with_ai, build_evidence, validate_answer
 from app.services.cqc_report import analyze_cqc_pdf, extract_changes
 from app.services.cqc_compare import compare_safety_components
 from app.services.cqc_image_compare import compare_photo_images
@@ -77,49 +76,6 @@ class RulesRegressionTests(unittest.TestCase):
         self.assertEqual(workbook.active["B2"].data_type, "s")
 
 
-class AiTests(unittest.IsolatedAsyncioTestCase):
-    def test_fabricated_evidence_is_rejected(self):
-        answer = {"findings": [{"severity": "中", "issue": "需要核对", "suggestion": "请核实", "citations": [{"id": "E1", "quote": "虚构"}]}]}
-        with self.assertRaises(ValueError):
-            validate_answer(json.dumps(answer), [{"id": "E1", "source": "第一页", "text": "真实文字"}])
-        answer["findings"][0]["citations"][0]["quote"] = "真实文字"
-        validated = validate_answer(json.dumps(answer), [{"id": "E1", "source": "第一页", "text": "真实文字"}])
-        self.assertEqual(validated["findings"][0]["citations"][0]["source"], "第一页")
-
-    def test_evidence_budget_reports_partial(self):
-        result = analyze_cqc_pdf(sample_pdf())
-        result["safety_components"] = [{"raw": "x" * 70000}]
-        evidence, partial = build_evidence(result, "review")
-        self.assertTrue(partial)
-        self.assertEqual(evidence[0]["id"], "W1")
-
-    async def test_neoflow_call_and_failure_preserve_rule_facts(self):
-        result = analyze_cqc_pdf(sample_pdf())
-        cfg = SimpleNamespace(api_key="fake-test-only", provider="neoflow", model="deepseek/deepseek-v4-pro",
-                              base_url="https://example.invalid/v1", timeout=30, temperature=0.1,
-                              max_tokens=4000, enable_thinking=False)
-        client = AsyncMock()
-        client.chat.completions.create.return_value = SimpleNamespace(choices=[SimpleNamespace(
-            finish_reason="stop", message=SimpleNamespace(content='{"findings": []}'))])
-        manager = AsyncMock()
-        manager.__aenter__.return_value = client
-        with patch("app.services.cqc_ai.get_settings", return_value=SimpleNamespace(ai_service=cfg)), patch("app.services.cqc_ai.AsyncOpenAI", return_value=manager):
-            answer = await analyze_with_ai(result, "review")
-            self.assertEqual(answer["status"], "completed")
-            call = client.chat.completions.create.call_args.kwargs
-            self.assertEqual(call["extra_body"], {"enable_thinking": False})
-            self.assertEqual(call["model"], cfg.model)
-            self.assertGreaterEqual(call["max_tokens"], 12000)
-            client.chat.completions.create.return_value.choices[0].finish_reason = "length"
-            truncated = await analyze_with_ai(result, "review")
-            self.assertEqual(truncated["status"], "failed")
-            client.chat.completions.create.side_effect = TimeoutError("secret must not leak")
-            answer = await analyze_with_ai(result, "review")
-        self.assertEqual(answer["status"], "failed")
-        self.assertNotIn("secret", json.dumps(answer))
-        self.assertEqual(result["page_count"], 2)
-
-
 class CqcApiTests(unittest.TestCase):
     def setUp(self):
         cqc._jobs.clear()
@@ -134,8 +90,10 @@ class CqcApiTests(unittest.TestCase):
         self.store.start()
         self.storage = patch("app.storage.get_store", return_value=store)
         self.storage.start()
-        self.ai = patch("app.routers.cqc.analyze_with_ai", new=AsyncMock(return_value={"status": "completed", "findings": [], "message": "test"}))
-        self.ai.start()
+        self.model_call = patch("openai.resources.chat.completions.Completions.create", side_effect=AssertionError("CQC must not call AI"))
+        self.async_model_call = patch("openai.resources.chat.completions.AsyncCompletions.create", side_effect=AssertionError("CQC must not call AI"))
+        self.sync_calls = self.model_call.start()
+        self.async_calls = self.async_model_call.start()
         app = FastAPI()
         app.middleware("http")(hardware_auth_middleware)
         app.include_router(cqc.router)
@@ -145,7 +103,8 @@ class CqcApiTests(unittest.TestCase):
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
-        self.ai.stop()
+        self.model_call.stop()
+        self.async_model_call.stop()
         self.storage.stop()
         self.store.stop()
         self.verify.stop()
@@ -168,7 +127,9 @@ class CqcApiTests(unittest.TestCase):
         for mode in ("review", "compare"):
             task_id, job = self.submit_and_wait(mode)
             self.assertEqual(job["status"], "completed", job)
-            self.assertEqual(job["ai"]["status"], "completed")
+            self.assertNotIn("ai", job)
+            self.sync_calls.assert_not_called()
+            self.async_calls.assert_not_called()
             route = f"/api/v1/cqc/tasks/{task_id}"
             self.assertEqual(self.client.get(route + "/export").status_code, 200)
             self.user = {"id": "owner-b"}
@@ -199,14 +160,22 @@ class CqcApiTests(unittest.TestCase):
         files = {"file": ("bad.pdf", b"not pdf", "application/pdf")}
         self.assertEqual(self.client.post('/api/v1/cqc-review/analyze', files=files, headers=self.headers).status_code, 400)
 
-    def test_ai_failure_still_exports_rules(self):
-        with patch("app.routers.cqc.analyze_with_ai", new=AsyncMock(return_value={"status": "failed", "findings": [], "message": "timeout"})):
-            task_id, job = self.submit_and_wait()
-        self.assertEqual(job["status"], "completed")
-        self.assertEqual(job["ai"]["status"], "failed")
-        self.assertEqual(self.client.get(f"/api/v1/cqc/tasks/{task_id}/export").status_code, 200)
+    def test_legacy_archive_recovers_rules_without_ai_in_result_or_export(self):
+        task_id, job = self.submit_and_wait()
+        legacy = dict(job, status="analyzing", ai={"status": "running", "message": "legacy-ai-only"})
+        self.objects[cqc.artifact_key("owner-a", task_id)] = json.dumps(legacy).encode()
+        cqc._jobs.clear()
+        route = f"/api/v1/cqc/tasks/{task_id}"
+        restored = self.client.get(route).json()
+        self.assertEqual(restored["status"], "completed")
+        self.assertEqual(restored["result"], job["result"])
+        self.assertNotIn("ai", restored)
+        response = self.client.get(route + "/export")
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(io.BytesIO(response.content))
+        self.assertNotIn("legacy-ai-only", str(list(workbook.active.values)))
 
-    def test_storage_failure_stops_ai(self):
+    def test_storage_failure_stops_processing(self):
         with patch("app.routers.cqc.persist_upload", new=AsyncMock(side_effect=OSError("failure"))):
             _, job = self.submit_and_wait()
         self.assertEqual(job["status"], "failed")

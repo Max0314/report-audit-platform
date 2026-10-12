@@ -1,4 +1,4 @@
-"""生产冒烟：合成样本、临时门户会话、真实 AI；仅清理本次生成的 OSS 对象。
+"""生产冒烟：合成样本、临时门户会话、原 Excel 真实 AI；仅清理本次生成的 OSS 对象。
 
 在部署主机运行：python3 scripts/verify_cqc_live.py --base-url HTTPS入口 --fixtures /tmp/合成样本目录
 样本通过 tests.cqc_fixtures.write_fixtures 在本地生成；本脚本不输出 Cookie、Key 或原文。
@@ -15,7 +15,7 @@ import urllib.request
 parser = argparse.ArgumentParser()
 parser.add_argument("--base-url", required=True)
 parser.add_argument("--fixtures", required=True)
-parser.add_argument("--existing-only", action="store_true", help="只复验原 Excel 功能，避免重复已通过的 CQC 模型调用")
+parser.add_argument("--existing-only", action="store_true", help="只复验原 Excel 功能，跳过 CQC 规则检查")
 args = parser.parse_args()
 base = args.base_url.rstrip("/")
 fixtures = Path(args.fixtures)
@@ -116,6 +116,9 @@ try:
     check(request("/api/v1/cqc/tasks/" + "0" * 32)[0] == 401, "anonymous API denied")
     check(request("/cqc-review")[0] == 302, "anonymous page redirected")
     owner, other = session("admin"), session("member")
+    portal_url = base.removesuffix("/report-audit") + "/neo/"
+    with urllib.request.urlopen(urllib.request.Request(portal_url, headers={"Cookie": owner}), timeout=30) as portal:
+        check(portal.status == 200 and "/login" not in portal.url, "portal return destination")
     identity = container_python("report-audit-platform", '''
 import asyncio,json,hashlib
 from app.auth import _verify
@@ -129,6 +132,10 @@ print('SMOKE_JSON:'+json.dumps({'owner_hash':hashlib.sha256(str(key).encode()).h
     for path in ("/review", "/analysis", "/cqc-review", "/cqc-compare"):
         code, body, _ = request(path, owner)
         check(code == 200 and body.count(b'class="nav-link') == 4, "four tabs " + path)
+        check('href="/neo_hardware/neo/"' in body.decode() and '返回硬件门户' in body.decode(), "portal return " + path)
+        check('CQC单报告审核' in body.decode() and 'CQC 变更审核' not in body.decode(), "CQC label " + path)
+        if path.startswith('/cqc-'):
+            check('AI 辅助分析' not in body.decode() and 'aiPanel' not in body.decode(), "no CQC AI panel " + path)
     for path in ("/static/js/auth.js", "/static/js/cqc.js", "/static/css/cqc-nav.css"):
         check(request(path, owner)[0] == 200, "static " + path)
     check(upload("/api/v1/cqc-review/analyze", [("file", "old.pdf")], owner, csrf=False)[0] == 403, "CQC CSRF denied")
@@ -142,9 +149,7 @@ print('SMOKE_JSON:'+json.dumps({'owner_hash':hashlib.sha256(str(key).encode()).h
         cleanup_keys.append(key)
         route = f"/api/v1/cqc/tasks/{task_id}"
         job = wait_result(route, owner)
-        print(json.dumps({"mode": mode, "ai_status": job["ai"]["status"], "model": job["ai"].get("model"),
-                          "failure_kind": job["ai"].get("failure_kind"), "findings": len(job["ai"]["findings"])}, ensure_ascii=False), flush=True)
-        check(job["ai"]["status"] == "completed" and job["ai"]["model"] == "deepseek/deepseek-v4-pro", "CQC real AI " + mode)
+        check("ai" not in job, "CQC rules only " + mode)
         check(bool(job["result"]["warnings"]), "missing data warnings " + mode)
         check(request(route, other)[0] == 404 and request(route + "/export", other)[0] == 404, "CQC owner isolation " + mode)
         code, body, _ = request(route + "/export", owner)
