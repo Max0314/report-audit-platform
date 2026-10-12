@@ -246,6 +246,9 @@ def enrich_changes(pages: list[str], changes: list[dict], safety_components: lis
         elif "电源适配器" in change["item"]:
             certificate_match = re.search(r"证书号\s*[:：]\s*(\d{14,20})", change["after"])
             certificate = certificate_match.group(1) if certificate_match else None
+            if not certificate:
+                warnings.append("新增电源适配器的变更说明未提取到明确证书号，无法按证书匹配；型号等其他文本不能视为证书号")
+                continue
             candidates = [part for part in safety_components if certificate and part["certificate"] == certificate]
             if len(candidates) != 1:
                 warnings.append("新增电源适配器未能按证书号在安全关键件清单中唯一定位")
