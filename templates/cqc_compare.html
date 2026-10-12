@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CQC 双报告对比 - 硬件研发部测试报告审核平台</title>
+    <link rel="stylesheet" href="{{ base_path }}/static/css/style.css">
+    <style>
+        .compare-files { display: flex; flex-wrap: wrap; align-items: end; gap: 20px; }
+        .compare-files label { display: grid; gap: 8px; }
+        .compare-list { display: grid; gap: 12px; margin-top: 16px; }
+        .compare-item { padding: 14px 16px; border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+        .compare-item p { margin-top: 6px; }
+        .compare-table-wrap { overflow-x: auto; }
+        .compare-table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+        .compare-table th, .compare-table td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border-color); vertical-align: top; overflow-wrap: anywhere; }
+        .compare-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+        .compare-muted { color: var(--text-secondary); }
+        .compare-warning { padding: 12px; border-left: 4px solid var(--warning-color); background: #fffbeb; margin-top: 12px; }
+        .compare-section { margin-top: 22px; }
+        .compare-photo-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 12px; }
+        .compare-photo-pair img { max-width: 100%; max-height: 360px; object-fit: contain; border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+        .compare-changed-field { background: #fffbeb; }
+    </style>
+<link rel="stylesheet" href="{{ base_path }}/static/css/cqc-nav.css?v=3">
+<script src="{{ base_path }}/static/js/auth.js"></script>
+<script src="{{ base_path }}/static/js/cqc.js?v=1"></script>
+</head>
+<body>
+    <header class="header">
+        <div class="container header-content">
+            <a href="{{ base_path }}/review" class="logo">
+                <img src="{{ base_path }}/static/images/logo.jpg" alt="Logo" class="logo-img">
+                <span class="logo-text">硬件研发部测试报告审核平台</span>
+            </a>
+            {% include 'function_nav.html' %}
+        </div>
+    </header>
+    <main class="main-content">
+        <div class="container">
+            <section class="card">
+                <h1 class="card-title">CQC 双报告对比</h1>
+                <p class="card-subtitle">分别上传同一型号的旧版与新版 PDF，对比提取到的安全关键件字段及样品照片像素差异。</p>
+            </section>
+            <section class="card">
+                <p>比较范围：四项基本字段、安全关键件、声明变更及照片像素；不代表全文或全部测试项目对比。每份 PDF 不超过 50 MB、200 页，扫描版需先 OCR。</p>
+                <form id="compareForm" class="compare-files">
+                    <label>旧版报告 <input name="old_file" type="file" accept=".pdf,application/pdf" required></label>
+                    <label>新版报告 <input name="new_file" type="file" accept=".pdf,application/pdf" required></label>
+                    <button id="compareButton" class="btn btn-primary" type="submit">开始对比</button>
+                </form>
+                <p id="compareStatus" role="status" aria-live="polite" style="margin-top: 12px;"></p>
+            </section>
+            <div id="compareResults" hidden>
+                <section class="card">
+                    <h2 class="card-title">对比摘要</h2>
+                    <p id="compareSummary"></p>
+                    <div class="compare-table-wrap"><table class="compare-table">
+                        <thead><tr><th>项目</th><th>旧版</th><th>新版</th></tr></thead>
+                        <tbody id="reportMetadata"></tbody>
+                    </table></div>
+                    <div id="compareWarnings"></div>
+                </section>
+                <section class="card">
+                    <h2 class="card-title">样品字段变化</h2>
+                    <div class="compare-table-wrap"><table class="compare-table">
+                        <thead><tr><th>字段</th><th>旧版</th><th>新版</th><th>结果</th></tr></thead>
+                        <tbody id="fieldChanges"></tbody>
+                    </table></div>
+                </section>
+                <section class="card">
+                    <h2 class="card-title">安全关键件逐项对照</h2>
+                    <p class="card-subtitle">按证书号、名称与型号关联同一关键件；展开条目可查看规格、制造商、生产企业、认证标准和原文。</p>
+                    <div class="compare-table-wrap"><table class="compare-table">
+                        <thead><tr><th>旧版序号</th><th>新版序号</th><th>关键件</th><th>状态</th><th>详细字段</th></tr></thead>
+                        <tbody id="componentComparison"></tbody>
+                    </table></div>
+                </section>
+                <section class="card">
+                    <h2 class="card-title">样品照片视觉对比</h2>
+                    <p class="card-subtitle">按照片页与图片顺序对照画面；画面明显变化和仅编码/轻微变化分别列出，并提供新旧预览。</p>
+                    <p id="photoCount" class="compare-muted"></p>
+                    <div class="compare-section"><h3>照片内容变化</h3><div id="changedPhotos" class="compare-list"></div></div>
+                    <div class="compare-section"><h3>仅编码或轻微画面变化</h3><div id="minorPhotos" class="compare-list"></div></div>
+                </section>
+            </div>
+        </div>
+    {% include 'cqc_ai_panel.html' %}
+    </main>
+    <script>
+        const compareForm = document.getElementById('compareForm');
+        const compareStatus = document.getElementById('compareStatus');
+        const compareResults = document.getElementById('compareResults');
+        const compareButton = document.getElementById('compareButton');
+
+        function line(container, label, value) {
+            const paragraph = document.createElement('p');
+            paragraph.className = 'compare-value';
+            const strong = document.createElement('strong');
+            strong.textContent = label;
+            paragraph.append(strong, document.createTextNode(value ?? '—'));
+            container.appendChild(paragraph);
+        }
+
+        function tableRow(container, values) {
+            const row = document.createElement('tr');
+            for (const value of values) {
+                const cell = document.createElement('td');
+                cell.textContent = value ?? '—';
+                row.appendChild(cell);
+            }
+            container.appendChild(row);
+        }
+
+        function emptyMessage(container, message) {
+            if (!container.children.length) line(container, '', message);
+        }
+
+        function showComparison(data) {
+            const summary = data.summary;
+            document.getElementById('compareSummary').textContent =
+                `安全关键件：新增 ${summary.added_components}、减少 ${summary.removed_components}、修改 ${summary.modified_components}、相同 ${summary.unchanged_components} 项；` +
+                `样品照片：内容变化 ${summary.changed_photos} 张，轻微或编码变化 ${summary.slightly_changed_photos} 张。`;
+
+            const metadata = document.getElementById('reportMetadata');
+            metadata.replaceChildren();
+            for (const [label, key] of [['文件', 'filename'], ['样品型号', 'model'], ['报告编号', 'report_number'],
+                                       ['申请编号', 'application_number'], ['页数', 'page_count']]) {
+                tableRow(metadata, [label, data.old_report[key], data.new_report[key]]);
+            }
+            const warnings = document.getElementById('compareWarnings');
+            warnings.replaceChildren();
+            for (const warning of data.warnings) {
+                const item = document.createElement('p');
+                item.className = 'compare-warning';
+                item.textContent = warning;
+                warnings.appendChild(item);
+            }
+
+            const fields = document.getElementById('fieldChanges');
+            fields.replaceChildren();
+            for (const field of data.fields) {
+                tableRow(fields, [field.name, field.old.value, field.new.value, !field.old.value || !field.new.value ? '未完成提取' : field.changed ? '变化' : '相同']);
+            }
+
+            const components = document.getElementById('componentComparison');
+            components.replaceChildren();
+            const comparisons = [
+                ...(data.safety_changes.ambiguous?.old || []).map(part => ({status: '待人工匹配', old: part, new: null, changed_fields: []})),
+                ...(data.safety_changes.ambiguous?.new || []).map(part => ({status: '待人工匹配', old: null, new: part, changed_fields: []})),
+                ...data.safety_changes.added.map(part => ({ status: '新增', old: null, new: part, changed_fields: [] })),
+                ...data.safety_changes.removed.map(part => ({ status: '减少', old: part, new: null, changed_fields: [] })),
+                ...data.safety_changes.modified.map(part => ({ status: '修改', ...part })),
+                ...data.safety_changes.unchanged.map(part => ({ status: '相同', ...part, changed_fields: [] })),
+            ].sort((left, right) => (left.new || left.old).part_number.localeCompare(
+                (right.new || right.old).part_number, 'zh-CN', { numeric: true }));
+            const detailFields = [
+                ['name', '名称'], ['model', '型号'], ['certificate', '证书号'],
+                ['specification', '规格/材料'], ['manufacturer', '生产者（制造商）'],
+                ['factory', '生产企业'], ['standard', '认证标准'], ['remark', '备注'],
+                ['page', 'PDF 页码'],
+            ];
+            for (const comparison of comparisons) {
+                const row = document.createElement('tr');
+                const values = [comparison.old?.part_number, comparison.new?.part_number,
+                                (comparison.new || comparison.old).name, comparison.status];
+                for (const value of values) {
+                    const cell = document.createElement('td');
+                    cell.textContent = value ?? '—';
+                    row.appendChild(cell);
+                }
+                const cell = document.createElement('td');
+                const details = document.createElement('details');
+                if (comparison.status !== '相同') details.open = true;
+                const label = document.createElement('summary');
+                label.textContent = '查看新旧完整字段';
+                details.appendChild(label);
+                const table = document.createElement('table');
+                table.className = 'compare-table';
+                const header = document.createElement('tr');
+                for (const text of ['字段', '旧版', '新版']) {
+                    const heading = document.createElement('th');
+                    heading.textContent = text;
+                    header.appendChild(heading);
+                }
+                table.appendChild(header);
+                for (const [key, title] of detailFields) {
+                    const fieldRow = document.createElement('tr');
+                    if (comparison.changed_fields.includes(key)) fieldRow.className = 'compare-changed-field';
+                    for (const text of [title, comparison.old?.[key], comparison.new?.[key]]) {
+                        const fieldCell = document.createElement('td');
+                        fieldCell.textContent = text ?? '—';
+                        fieldRow.appendChild(fieldCell);
+                    }
+                    table.appendChild(fieldRow);
+                }
+                details.appendChild(table);
+                if (comparison.model_added?.length || comparison.model_removed?.length) {
+                    if (comparison.model_added?.length) line(details, '新增型号：', comparison.model_added.join('、'));
+                    if (comparison.model_removed?.length) line(details, '减少型号：', comparison.model_removed.join('、'));
+                }
+                if (comparison.status !== '相同') {
+                    const original = document.createElement('details');
+                    const title = document.createElement('summary');
+                    title.textContent = '查看报告原文';
+                    original.appendChild(title);
+                    line(original, '旧版：', comparison.old?.raw || '—');
+                    line(original, '新版：', comparison.new?.raw || '—');
+                    details.appendChild(original);
+                }
+                cell.appendChild(details);
+                row.appendChild(cell);
+                components.appendChild(row);
+            }
+
+            const photos = data.photo_comparison;
+            document.getElementById('photoCount').textContent =
+                `检查状态：${photos.coverage}。旧版 ${photos.old_photo_pages} 页、新版 ${photos.new_photo_pages} 页样品照片；逐张对比 ${photos.images_compared} 张。`;
+            const changedPhotos = document.getElementById('changedPhotos');
+            const minorPhotos = document.getElementById('minorPhotos');
+            changedPhotos.replaceChildren();
+            minorPhotos.replaceChildren();
+            for (const [items, container] of [[photos.changes, changedPhotos], [photos.format_only, minorPhotos]]) {
+                for (const change of items) {
+                    const card = document.createElement('div');
+                    card.className = 'compare-item';
+                    line(card, `${change.status}：`, `${change.caption} · 旧版第 ${change.old_page || '—'} 页 → 新版第 ${change.new_page || '—'} 页`);
+                    if (change.visual_difference_percent !== null) {
+                        line(card, '缩略图像素差异：', `${change.visual_difference_percent}%`);
+                    }
+                    const pair = document.createElement('div');
+                    pair.className = 'compare-photo-pair';
+                    for (const [label, source] of [['旧版图片', change.old_preview], ['新版图片', change.new_preview]]) {
+                        const side = document.createElement('div');
+                        line(side, '', label);
+                        if (source) {
+                            const image = document.createElement('img');
+                            image.src = source;
+                            image.alt = `${label}：${change.caption}`;
+                            side.appendChild(image);
+                        }
+                        pair.appendChild(side);
+                    }
+                    card.appendChild(pair);
+                    container.appendChild(card);
+                }
+            }
+            emptyMessage(changedPhotos, photos.coverage === '已完成' ? '已比较的照片未发现明显像素变化，仍需人工复核。' : '照片检查未全部完成，不能判断无变化。');
+            emptyMessage(minorPhotos, '没有可展示的轻微变化记录。');
+            compareResults.hidden = false;
+        }
+
+        compareForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            compareResults.hidden = true;
+            compareButton.disabled = true;
+            compareStatus.textContent = '正在解析并对比两份报告，请稍候…';
+            try {
+                await Cqc.run('compare', new FormData(compareForm), showComparison, compareStatus);
+            } catch (error) {
+                compareStatus.textContent = `对比失败：${error.message}`;
+            } finally {
+                compareButton.disabled = false;
+            }
+        });
+        Cqc.resume('compare', showComparison, compareStatus, compareButton);
+    </script>
+</body>
+</html>

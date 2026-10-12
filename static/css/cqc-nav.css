@@ -1,0 +1,10 @@
+.header-content { flex-wrap: wrap; gap: 16px; }
+.logo { min-width: 0; }
+.logo-img { width: 180px; height: 48px; flex: 0 0 180px; object-fit: contain; margin-top: 0; }
+.nav { flex-wrap: wrap; }
+.nav-link { white-space: nowrap; }
+.cqc-ai-finding { margin: 18px 0; padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; }
+.cqc-ai-finding p, #ruleWarnings p { margin: 10px 0; overflow-wrap: anywhere; }
+.cqc-ai-finding pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+[hidden] { display: none !important; }
+@media (max-width: 700px) { .logo-img { width: 140px; flex-basis: 140px; } .logo-text { font-size: 15px; } .nav { gap: 4px; } .nav-link { padding: 8px; } }
