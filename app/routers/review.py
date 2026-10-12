@@ -13,6 +13,7 @@ import secrets
 from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -354,7 +355,8 @@ async def export_review_report(request: Request, task_id: str):
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={
-                "Content-Disposition": f"attachment; filename=审核报告_{task['filename']}.xlsx"
+                "Content-Disposition": "attachment; filename=review-report.xlsx; filename*=UTF-8''"
+                + quote(f"审核报告_{Path(task['filename']).stem}.xlsx", safe="")
             }
         )
 

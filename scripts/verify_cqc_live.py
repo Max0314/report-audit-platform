@@ -15,6 +15,7 @@ import urllib.request
 parser = argparse.ArgumentParser()
 parser.add_argument("--base-url", required=True)
 parser.add_argument("--fixtures", required=True)
+parser.add_argument("--existing-only", action="store_true", help="只复验原 Excel 功能，避免重复已通过的 CQC 模型调用")
 args = parser.parse_args()
 base = args.base_url.rstrip("/")
 fixtures = Path(args.fixtures)
@@ -131,7 +132,8 @@ print('SMOKE_JSON:'+json.dumps({'owner_hash':hashlib.sha256(str(key).encode()).h
     for path in ("/static/js/auth.js", "/static/js/cqc.js", "/static/css/cqc-nav.css"):
         check(request(path, owner)[0] == 200, "static " + path)
     check(upload("/api/v1/cqc-review/analyze", [("file", "old.pdf")], owner, csrf=False)[0] == 403, "CQC CSRF denied")
-    for mode, fields in (("review", [("file", "old.pdf")]), ("compare", [("old_file", "old.pdf"), ("new_file", "new.pdf")])):
+    cqc_cases = () if args.existing_only else (("review", [("file", "old.pdf")]), ("compare", [("old_file", "old.pdf"), ("new_file", "new.pdf")]))
+    for mode, fields in cqc_cases:
         code, body, _ = upload(f"/api/v1/cqc-{mode}/analyze", fields, owner)
         check(code == 202, "CQC " + mode + " upload")
         task_id = json.loads(body)["task_id"]
