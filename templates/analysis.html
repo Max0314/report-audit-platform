@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="{{ base_path }}/static/css/style.css">
     <script src="{{ base_path }}/static/lib/plotly.min.js"></script>
     <script src="{{ base_path }}/static/js/auth.js"></script>
+<link rel="stylesheet" href="{{ base_path }}/static/css/cqc-nav.css?v=3">
 </head>
 <body>
     <!-- 顶部导航 -->
@@ -17,11 +18,7 @@
                     <img src="{{ base_path }}/static/images/logo.jpg" alt="Logo" class="logo-img">
                     <span class="logo-text">硬件研发部测试报告审核平台</span>
                 </a>
-                <nav class="nav">
-                    <a href="{{ base_path }}/" class="nav-link">首页</a>
-                    <a href="{{ base_path }}/review" class="nav-link">智能审核</a>
-                    <a href="{{ base_path }}/analysis" class="nav-link active">智能分析</a>
-                </nav>
+                {% include 'function_nav.html' %}
             </div>
         </div>
     </header>

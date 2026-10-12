@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CQC 变更审核 - 硬件研发部测试报告审核平台</title>
+    <link rel="stylesheet" href="{{ base_path }}/static/css/style.css">
+    <style>
+        .cqc-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+        .cqc-field { padding: 16px; background: var(--bg-color); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+        .cqc-muted { color: var(--text-secondary); }
+        .cqc-list { display: grid; gap: 16px; }
+        .cqc-change { padding: 16px; border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+        .cqc-change p { margin-top: 8px; }
+        .cqc-component { margin-top: 12px; padding: 12px 16px; background: var(--primary-light); border-radius: var(--radius-md); }
+        .cqc-upload { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+        .cqc-table-wrap { overflow-x: auto; margin-top: 16px; }
+        .cqc-table { width: 100%; border-collapse: collapse; }
+        .cqc-table th, .cqc-table td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border-color); vertical-align: top; }
+        .cqc-table th { white-space: nowrap; }
+        .cqc-table td { overflow-wrap: anywhere; }
+        .cqc-table pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-width: 600px; }
+        .cqc-photo-issue { padding: 12px 16px; border-left: 4px solid var(--error-color); background: #fef2f2; border-radius: var(--radius-md); }
+    </style>
+<link rel="stylesheet" href="{{ base_path }}/static/css/cqc-nav.css?v=3">
+<script src="{{ base_path }}/static/js/auth.js"></script>
+<script src="{{ base_path }}/static/js/cqc.js?v=1"></script>
+</head>
+<body>
+    <header class="header">
+        <div class="container header-content">
+            <a href="{{ base_path }}/review" class="logo">
+                <img src="{{ base_path }}/static/images/logo.jpg" alt="Logo" class="logo-img">
+                <span class="logo-text">硬件研发部测试报告审核平台</span>
+            </a>
+            {% include 'function_nav.html' %}
+        </div>
+    </header>
+    <main class="main-content">
+        <div class="container">
+            <section class="card">
+                <h1 class="card-title">CQC 变更审核</h1>
+                <p class="card-subtitle">上传一份包含“变更确认表”的 CQC PDF 报告，提取样品信息及报告明确记载的增减内容。</p>
+            </section>
+            <section class="card">
+                <form id="cqcForm" class="cqc-upload">
+                    <label for="cqcFile">选择报告 PDF</label>
+                    <input id="cqcFile" name="file" type="file" accept=".pdf,application/pdf" required>
+                    <button id="submitButton" class="btn btn-primary" type="submit">开始审核</button>
+                </form>
+                <p>支持可提取文字的 PDF，每份不超过 50 MB、200 页；扫描版需先 OCR。</p>
+                <p id="status" role="status" aria-live="polite" style="margin-top: 12px;"></p>
+            </section>
+            <div id="results" hidden>
+                <section class="card">
+                    <h2 class="card-title">样品信息</h2>
+                    <p id="reportInfo" class="cqc-muted"></p>
+                    <div id="fields" class="cqc-fields" style="margin-top: 16px;"></div>
+                </section>
+                <section class="card">
+                    <h2 class="card-title">变更内容</h2>
+                    <p id="summary" class="cqc-muted"></p>
+                    <div id="changes" class="cqc-list" style="margin-top: 16px;"></div>
+                </section>
+                <section class="card">
+                    <h2 class="card-title">安全关键件清单</h2>
+                    <p id="componentCount" class="cqc-muted"></p>
+                    <div class="cqc-table-wrap">
+                        <table class="cqc-table">
+                            <thead><tr><th>序号</th><th>关键件名称</th><th>型号 / 规格</th><th>证书号</th><th>备注</th><th>来源</th><th>完整条目</th></tr></thead>
+                            <tbody id="safetyComponents"></tbody>
+                        </table>
+                    </div>
+                </section>
+                <section class="card">
+                    <h2 class="card-title">图片漏贴检查</h2>
+                    <p class="card-subtitle">核对照片标题与 PDF 中实际嵌入的图像；不能据此判断照片内容是否贴错。</p>
+                    <p id="photoSummary" style="margin-top: 12px;"></p>
+                    <div id="photoIssues" class="cqc-list" style="margin-top: 16px;"></div>
+                </section>
+            </div>
+        </div>
+    {% include 'cqc_ai_panel.html' %}
+    </main>
+    <script>
+        const form = document.getElementById('cqcForm');
+        const status = document.getElementById('status');
+        const results = document.getElementById('results');
+        const submitButton = document.getElementById('submitButton');
+
+        function addLine(container, label, value) {
+            const paragraph = document.createElement('p');
+            const strong = document.createElement('strong');
+            strong.textContent = label;
+            paragraph.append(strong, document.createTextNode(value));
+            container.appendChild(paragraph);
+        }
+
+        function showResults(data) {
+            document.getElementById('reportInfo').textContent = `${data.filename} · 共 ${data.page_count} 页`;
+            const fields = document.getElementById('fields');
+            fields.replaceChildren();
+            for (const [name, field] of Object.entries(data.fields)) {
+                const card = document.createElement('div');
+                card.className = 'cqc-field';
+                addLine(card, `${name}：`, field.value || '未提取到');
+                if (field.page) addLine(card, '来源：', `PDF 第 ${field.page} 页`);
+                fields.appendChild(card);
+            }
+
+            document.getElementById('summary').textContent =
+                `明确新增 ${data.summary.added} 项，明确减少 ${data.summary.removed} 项，其他变更 ${data.summary.other} 项` +
+                (data.change_page ? ` · 依据：PDF 第 ${data.change_page} 页变更确认表` : ' · 未定位到变更确认表');
+            const changes = document.getElementById('changes');
+            changes.replaceChildren();
+            if (!data.changes.length) {
+                addLine(changes, '', '未提取到明确变更项，请人工核对原 PDF。');
+            }
+            for (const change of data.changes) {
+                const card = document.createElement('article');
+                card.className = 'cqc-change';
+                addLine(card, `${change.category} · 第 ${change.number} 项：`, change.item);
+                addLine(card, '变更前：', change.before);
+                addLine(card, '变更后：', change.after);
+                addLine(card, '变更依据：', `PDF 第 ${change.page} 页变更确认表`);
+                if (change.components && change.components.length) {
+                    addLine(card, '具体关键件：', '');
+                    for (const component of change.components) {
+                        const detail = document.createElement('div');
+                        detail.className = 'cqc-component';
+                        addLine(detail, `清单序号 ${component.part_number} · `, component.name);
+                        addLine(detail, '型号：', component.model);
+                        if (component.certificate) addLine(detail, '证书号：', component.certificate);
+                        addLine(detail, '清单来源：', `PDF 第 ${component.page} 页`);
+                        card.appendChild(detail);
+                    }
+                } else if (change.category === '新增' && /激光模块|PCB|电源适配器|主板方案/.test(change.item)) {
+                    addLine(card, '具体关键件：', '未能可靠定位，请人工核对关键件清单。');
+                }
+                changes.appendChild(card);
+            }
+
+            const safetyComponents = document.getElementById('safetyComponents');
+            safetyComponents.replaceChildren();
+            const components = data.safety_components || [];
+            document.getElementById('componentCount').textContent = `共提取 ${components.length} 条安全关键件。`;
+            const addedParts = new Set(data.changes.flatMap(change =>
+                (change.components || []).map(component => `${component.part_number}:${component.page}`)));
+            for (const component of components) {
+                const row = document.createElement('tr');
+                const values = [
+                    `${component.part_number}${addedParts.has(`${component.part_number}:${component.page}`) ? '（本次新增）' : ''}`,
+                    component.name,
+                    component.model,
+                    component.certificate || '—',
+                    component.remark || '—',
+                    `PDF 第 ${component.page} 页`,
+                ];
+                for (const value of values) {
+                    const cell = document.createElement('td');
+                    cell.textContent = value;
+                    row.appendChild(cell);
+                }
+                const detailsCell = document.createElement('td');
+                const details = document.createElement('details');
+                const summary = document.createElement('summary');
+                summary.textContent = '查看原文';
+                const original = document.createElement('pre');
+                original.textContent = component.raw;
+                details.append(summary, original);
+                detailsCell.appendChild(details);
+                row.appendChild(detailsCell);
+                safetyComponents.appendChild(row);
+            }
+
+            const photoCheck = data.photo_check;
+            const photoSummary = document.getElementById('photoSummary');
+            photoSummary.textContent = `${photoCheck.status}：检查 ${photoCheck.pages_checked} 页照片页，` +
+                `识别 ${photoCheck.expected_images} 处照片标题、${photoCheck.embedded_images} 张嵌入图片。` +
+                (photoCheck.reference_pages.length ? `PDF 第 ${photoCheck.reference_pages.join('、')} 页为照片引用页，不计入缺图。` : '');
+            photoSummary.style.color = photoCheck.status === '未发现疑似漏贴' ? 'var(--success-color)' : 'var(--warning-color)';
+            const photoIssues = document.getElementById('photoIssues');
+            photoIssues.replaceChildren();
+            for (const issue of photoCheck.issues) {
+                const card = document.createElement('div');
+                card.className = 'cqc-photo-issue';
+                addLine(card, `PDF 第 ${issue.page} 页：`, issue.reason);
+                if (issue.captions.length) addLine(card, '照片标题：', issue.captions.join('；'));
+                photoIssues.appendChild(card);
+            }
+            if (!photoCheck.issues.length && photoCheck.pages_checked) {
+                addLine(photoIssues, '', '按照片标题与嵌入图像数量核对，未发现疑似漏贴。');
+            }
+            results.hidden = false;
+        }
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const file = document.getElementById('cqcFile').files[0];
+            if (!file) return;
+            results.hidden = true;
+            submitButton.disabled = true;
+            status.textContent = '正在解析报告，请稍候…';
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                await Cqc.run('review', formData, showResults, status);
+            } catch (error) {
+                status.textContent = `审核失败：${error.message}`;
+            } finally {
+                submitButton.disabled = false;
+            }
+        });
+        Cqc.resume('review', showResults, status, submitButton);
+    </script>
+</body>
+</html>

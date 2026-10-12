@@ -1,0 +1,5 @@
+<nav class="nav" aria-label="报告功能">
+    {% for path, label in [('review', '智能审核'), ('analysis', '测数聚合分析'), ('cqc-review', 'CQC 变更审核'), ('cqc-compare', 'CQC 双报告对比')] %}
+    <a href="{{ base_path }}/{{ path }}" class="nav-link{% if request.url.path.endswith('/' + path) %} active{% endif %}"{% if request.url.path.endswith('/' + path) %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+</nav>

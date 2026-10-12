@@ -8,13 +8,14 @@ from contextlib import asynccontextmanager
 import os
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.gzip import GZipMiddleware
 
 from app.core import get_logger, get_settings, init_directories, BaseAPIException
 from app.routers import review_router, analysis_router
+from app.routers.cqc import router as cqc_router
 from app.middleware import RateLimiter
 from app.auth import close_auth_client, hardware_auth_middleware, validate_auth_config
 from app.storage import check_storage_ready
@@ -99,11 +100,8 @@ def _template_context(request: Request) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    """首页 - 入口选择"""
-    return templates.TemplateResponse(
-        "index.html",
-        _template_context(request),
-    )
+    """保留原门户入口，直接进入审核页面。"""
+    return RedirectResponse(_template_context(request)["base_path"] + "/review", status_code=302)
 
 
 @app.get("/review", response_class=HTMLResponse)
@@ -133,8 +131,18 @@ async def test_progress_page():
 
 # ============ API 路由 ============
 
+@app.get("/cqc-review", response_class=HTMLResponse)
+async def cqc_review_page(request: Request):
+    return templates.TemplateResponse("cqc_review.html", _template_context(request))
+
+
+@app.get("/cqc-compare", response_class=HTMLResponse)
+async def cqc_compare_page(request: Request):
+    return templates.TemplateResponse("cqc_compare.html", _template_context(request))
+
 app.include_router(review_router)
 app.include_router(analysis_router)
+app.include_router(cqc_router)
 
 
 # ============ Favicon（防止浏览器请求favicon导致延迟）============
