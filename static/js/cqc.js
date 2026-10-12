@@ -1,4 +1,4 @@
-/* CQC 公共交互。报告和 AI 文本只通过 textContent 渲染。 */
+/* CQC 公共交互。报告文本只通过 textContent 渲染。 */
 window.Cqc = (() => {
     const url = path => window.ReportAudit.url(path);
     const text = (parent, tag, value) => {
@@ -8,33 +8,10 @@ window.Cqc = (() => {
         return element;
     };
     function panel(job) {
-        document.getElementById('aiPanel').hidden = false;
-        const ai = job.ai || {message: '正在解析报告…', findings: []};
-        const labels = {completed: '完成', partial: '部分完成', failed: '未完成', running: '进行中'};
-        document.getElementById('aiStatus').textContent =
-            `${labels[ai.status] || '进行中'} · ${ai.message || ''}${ai.model ? ' 模型：' + ai.model : ''}`;
+        document.getElementById('resultPanel').hidden = false;
         const warnings = document.getElementById('ruleWarnings');
         warnings.replaceChildren();
         for (const warning of job.result?.warnings || []) text(warnings, 'p', '需复核：' + warning);
-        const findings = document.getElementById('aiFindings');
-        findings.replaceChildren();
-        for (const row of ai.findings || []) {
-            const card = document.createElement('article');
-            card.className = 'cqc-ai-finding';
-            text(card, 'h3', `[${row.severity}] ${row.issue}`);
-            text(card, 'p', row.suggestion);
-            const details = document.createElement('details');
-            text(details, 'summary', '查看引用依据与 PDF 页码');
-            for (const source of row.citations) {
-                text(details, 'p', `${source.id} · ${source.source} · 引用：${source.quote}`);
-                text(details, 'pre', source.text);
-            }
-            card.appendChild(details);
-            findings.appendChild(card);
-        }
-        if (ai.status === 'completed' && !ai.findings?.length) {
-            text(findings, 'p', 'AI 未提出额外发现；不代表报告通过认证或不存在未提取的问题。');
-        }
         const download = document.getElementById('cqcExport');
         download.hidden = job.status !== 'completed';
         download.href = url(`/api/v1/cqc/tasks/${job.task_id}/export`);
@@ -55,16 +32,16 @@ window.Cqc = (() => {
             if (job.result && !rendered) { render(job.result); rendered = true; }
             panel(job);
             if (job.status === 'completed') {
-                status.textContent = job.ai.status === 'completed' ? '规则与 AI 分析完成，请人工复核后使用。' : '规则检查完成；AI 分析未全部完成，请查看说明。';
+                status.textContent = '规则检查完成，请结合原 PDF 人工复核。';
                 return;
             }
-            status.textContent = job.status === 'analyzing' ? '规则结果已显示，AI 辅助分析进行中…' : '报告解析中…';
+            status.textContent = '报告解析中…';
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
         throw new Error('等待超时，可保留当前结果链接并稍后刷新查看');
     }
     async function run(mode, body, render, status) {
-        document.getElementById('aiPanel').hidden = true;
+        document.getElementById('resultPanel').hidden = true;
         const files = [...body.values()].filter(value => value instanceof File);
         if (files.some(file => file.size > 50 * 1024 * 1024)) throw new Error('单份 PDF 不能超过 50 MB');
         const job = await read(await fetch(url(`/api/v1/cqc-${mode}/analyze`), {

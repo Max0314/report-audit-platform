@@ -3,8 +3,9 @@
 .logo-img { width: 180px; height: 48px; flex: 0 0 180px; object-fit: contain; margin-top: 0; }
 .nav { flex-wrap: wrap; }
 .nav-link { white-space: nowrap; }
-.cqc-ai-finding { margin: 18px 0; padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; }
-.cqc-ai-finding p, #ruleWarnings p { margin: 10px 0; overflow-wrap: anywhere; }
-.cqc-ai-finding pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+#ruleWarnings p { margin: 10px 0; overflow-wrap: anywhere; }
+.function-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.portal-return { color: var(--primary-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px 12px; text-decoration: none; white-space: nowrap; }
+.portal-return:hover, .portal-return:focus-visible { background: var(--primary-light); }
 [hidden] { display: none !important; }
 @media (max-width: 700px) { .logo-img { width: 140px; flex-basis: 140px; } .logo-text { font-size: 15px; } .nav { gap: 4px; } .nav-link { padding: 8px; } }

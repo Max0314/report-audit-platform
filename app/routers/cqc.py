@@ -13,7 +13,6 @@ from openpyxl import Workbook
 
 from app.auth import current_user_key, require_task_owner
 from app.storage import get_store, persist_upload, rollback_objects, safe_filename
-from app.services.cqc_ai import analyze_with_ai
 from app.services.cqc_report import analyze_cqc_pdf
 from app.services.cqc_compare import compare_cqc_pdfs
 
@@ -30,7 +29,7 @@ def artifact_key(owner: str, task_id: str) -> str:
 
 
 def public_job(job: dict) -> dict:
-    return {k: v for k, v in job.items() if k not in ("owner_key", "created", "source_keys")}
+    return {k: v for k, v in job.items() if k not in ("owner_key", "created", "source_keys", "ai")}
 
 
 async def save_result(job: dict) -> None:
@@ -53,13 +52,6 @@ async def run_job(job: dict, files: list[tuple[str, bytes]]) -> None:
                                                 files[0][1], files[1][1], files[0][0], files[1][0])
         files.clear()
         job["result"] = result
-        job["status"] = "analyzing"
-        job["ai"] = {"status": "running", "findings": [], "message": "规则检查完成，正在进行 AI 辅助分析…"}
-        await save_result(job)
-        try:
-            job["ai"] = await asyncio.wait_for(analyze_with_ai(result, job["mode"]), timeout=190)
-        except asyncio.TimeoutError:
-            job["ai"] = {"status": "failed", "findings": [], "message": "AI 分析超时，规则结果已保留。"}
         job["status"] = "completed"
         await save_result(job)
     except ValueError as exc:
@@ -137,9 +129,7 @@ async def load_job(request: Request, task_id: str) -> dict:
                 job = json.loads(contents)
                 if job["status"] != "completed":
                     job["status"] = "completed"
-                    job["ai"] = {"status": "failed", "findings": [],
-                                 "message": "服务重启或任务缓存过期，AI 分析未完成；已恢复归档的规则结果。"}
-                return job
+                return public_job(job)
         except Exception:
             raise HTTPException(503, "结果归档暂时不可用") from None
     raise HTTPException(404, "任务不存在或已过期")

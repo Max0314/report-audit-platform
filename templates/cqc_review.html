@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CQC 变更审核 - 硬件研发部测试报告审核平台</title>
+    <title>CQC单报告审核 - 硬件研发部测试报告审核平台</title>
     <link rel="stylesheet" href="{{ base_path }}/static/css/style.css">
     <style>
         .cqc-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
@@ -22,9 +22,9 @@
         .cqc-table pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-width: 600px; }
         .cqc-photo-issue { padding: 12px 16px; border-left: 4px solid var(--error-color); background: #fef2f2; border-radius: var(--radius-md); }
     </style>
-<link rel="stylesheet" href="{{ base_path }}/static/css/cqc-nav.css?v=3">
+<link rel="stylesheet" href="{{ base_path }}/static/css/cqc-nav.css?v=4">
 <script src="{{ base_path }}/static/js/auth.js"></script>
-<script src="{{ base_path }}/static/js/cqc.js?v=1"></script>
+<script src="{{ base_path }}/static/js/cqc.js?v=2"></script>
 </head>
 <body>
     <header class="header">
@@ -39,7 +39,7 @@
     <main class="main-content">
         <div class="container">
             <section class="card">
-                <h1 class="card-title">CQC 变更审核</h1>
+                <h1 class="card-title">CQC单报告审核</h1>
                 <p class="card-subtitle">上传一份包含“变更确认表”的 CQC PDF 报告，提取样品信息及报告明确记载的增减内容。</p>
             </section>
             <section class="card">
@@ -80,7 +80,7 @@
                 </section>
             </div>
         </div>
-    {% include 'cqc_ai_panel.html' %}
+    {% include 'cqc_result_panel.html' %}
     </main>
     <script>
         const form = document.getElementById('cqcForm');
