@@ -179,7 +179,10 @@ class ParsingFixTests(unittest.TestCase):
 
 class LibraryApiTests(unittest.TestCase):
     def setUp(self):
-        self.user = {'id': 'admin', 'capabilities': {'canManageModelConfig': True}}
+        from app.core.config import get_settings
+        p = patch.object(get_settings().cqc_library, 'admin_user_ids', '11,12,13')
+        p.start(); self.addCleanup(p.stop)
+        self.user = {'id': 11, 'capabilities': {}}
         self.verify = patch('app.auth._verify', new=AsyncMock(side_effect=lambda *a, **kw: (self.user, True)))
         self.verify.start(); self.addCleanup(self.verify.stop)
         self.store = MemoryStore()
@@ -212,9 +215,34 @@ class LibraryApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/v1/cqc-library').status_code, 403)
         self.user = None
         self.assertEqual(self.upload().status_code, 401)
-        self.user = {'id': 'admin', 'capabilities': {'canManageModelConfig': True}}
-        with patch('app.auth._verify', new=AsyncMock(side_effect=[(self.user, True), ({'id': 'admin'}, True)])):
+        self.user = {'id': 11, 'capabilities': {}}
+        with patch('app.auth._verify', new=AsyncMock(side_effect=[(self.user, True), (None, True)])):
             self.assertEqual(self.upload().status_code, 403)
+
+    def test_three_authorized_accounts_and_unlisted_super_admin(self):
+        from app.main import app as page_app
+        page_client = TestClient(page_app)  # 无 lifespan，页面测试无需真实存储/模型。
+        self.addCleanup(page_client.close)
+        for uid in (11, '12', 13, 99):
+            allowed = uid != 99
+            self.user = {'id': uid, 'roles': ['super_admin'],
+                         'capabilities': {'canManageModelConfig': not allowed}}
+            with self.subTest(uid=uid):
+                self.assertEqual('认证库管理</a>' in page_client.get('/cqc-review').text, allowed)
+                self.assertEqual(page_client.get('/cqc-library').status_code, 200 if allowed else 403)
+                self.assertEqual(self.client.get('/api/v1/cqc-library').status_code, 200 if allowed else 403)
+                # 无效工作簿：获权账号进入校验；未获权账号不能进入写入流程。
+                self.assertEqual(self.upload(b'broken').status_code, 422 if allowed else 403)
+                self.assertEqual(self.client.post('/api/v1/cqc-library/activate', headers=self.headers,
+                    json={'version': 'a' * 64, 'expected_revision': 0}).status_code, 422 if allowed else 403)
+
+    def test_permission_revocation_and_portal_outage(self):
+        from app.core.config import get_settings
+        with patch.object(get_settings().cqc_library, 'admin_user_ids', ''):
+            self.assertEqual(self.client.get('/api/v1/cqc-library').status_code, 403)
+        with patch('app.auth._verify', new=AsyncMock(side_effect=[(self.user, True), (None, False)])) as verify:
+            self.assertEqual(self.upload().status_code, 503)
+            self.assertTrue(verify.call_args.kwargs['fresh'])
 
     def test_job_uses_snapshot_captured_before_processing(self):
         first = library.publish(workbook_bytes(), 'first.xlsx', 'admin', 0)

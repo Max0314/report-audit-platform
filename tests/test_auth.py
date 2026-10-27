@@ -5,7 +5,8 @@ from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 
-from app.auth import hardware_auth_middleware
+from app.auth import hardware_auth_middleware, can_manage_library
+from app.core.config import CqcLibrarySettings, get_settings
 
 
 def make_app() -> FastAPI:
@@ -24,6 +25,23 @@ def make_app() -> FastAPI:
 
 
 class AuthMiddlewareTests(unittest.TestCase):
+    def test_library_allowlist_validates_and_defaults_closed(self):
+        self.assertEqual(CqcLibrarySettings(admin_user_ids=' 013,11,12,11 ').admin_user_ids, '11,12,13')
+        for value in ('*', '11,', '-1', '0', '1.0', '１１', 'name'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                CqcLibrarySettings(admin_user_ids=value)
+        with patch.object(get_settings().cqc_library, 'admin_user_ids', ''):
+            self.assertFalse(can_manage_library({'id': 11, 'roles': ['super_admin']}))
+
+    def test_library_permission_uses_only_verified_database_id(self):
+        with patch.object(get_settings().cqc_library, 'admin_user_ids', '11,12,13'):
+            for uid in (11, '12', 13):
+                self.assertTrue(can_manage_library({'id': uid}))
+            for uid in (None, '', True, 11.0, '１１', ' 11', 'other', 99):
+                self.assertFalse(can_manage_library({'id': uid, 'name': 'authorized name',
+                    'username': '11', 'userKey': '11', 'roles': ['super_admin'],
+                    'capabilities': {'canManageModelConfig': True}}))
+
     def test_unauthenticated_api_returns_401(self):
         with patch("app.auth._verify", new=AsyncMock(return_value=(None, True))):
             with TestClient(make_app()) as client:

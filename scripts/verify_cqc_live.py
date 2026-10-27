@@ -17,6 +17,7 @@ parser.add_argument("--base-url", required=True)
 parser.add_argument("--fixtures", required=True)
 parser.add_argument("--existing-only", action="store_true", help="只复验原 Excel 功能，跳过 CQC 规则检查")
 parser.add_argument("--pcb-library-file", help="明确指定要正式导入的认证库 Excel；不自动清理正式库")
+parser.add_argument("--check-library-permissions", action="store_true", help="验证独立授权名单、页面及管理 API，不变更认证库")
 args = parser.parse_args()
 base = args.base_url.rstrip("/")
 fixtures = Path(args.fixtures)
@@ -32,6 +33,7 @@ def container_python(container, code):
 
 
 def session(role):
+    allowed_ids = container_python("report-audit-platform", "import json\nfrom app.core.config import get_settings\nprint('SMOKE_JSON:'+json.dumps(get_settings().cqc_library.admin_user_ids.split(',')))")
     data = container_python("stack-htmlsystm", '''
 import os,json
 from server.neo_user_key import get_shared_user_manager
@@ -42,13 +44,18 @@ from server.db_adapter import get_connection_pool
 from server.auth.signed_session import verify_token,AUTH_TOKEN_COOKIE
 manager=get_shared_user_manager()
 role=''' + repr(role) + '''
+allowed_ids=''' + repr(allowed_ids) + '''
 if role=='admin':
- user=manager.get_user_by_username(os.environ['SUPER_ADMIN_USERNAME'])
+ user=manager.get_user_by_id(int(allowed_ids[0]))
+elif role.startswith('user:'):
+ assert role[5:] in allowed_ids
+ user=manager.get_user_by_id(int(role[5:]))
 else:
  with get_connection_pool().get_cursor() as c:
   c.execute("SELECT id FROM users WHERE status='active' ORDER BY id")
   ids=[r['id'] for r in c.fetchall()]
- user=next(u for u in (manager.get_user_by_id(i) for i in ids) if not user_capabilities(u)['canManageModelConfig'])
+ user=next(u for u in (manager.get_user_by_id(i) for i in ids)
+           if str(u['id']) not in allowed_ids and bool(user_capabilities(u)['canManageModelConfig'])==(role=='other-admin'))
 assert user and user.get('status')=='active'
 with get_connection_pool().get_cursor() as c:
  c.execute('SELECT COUNT(*) AS n FROM auth_session_index WHERE user_id=%s',(user['id'],))
@@ -119,6 +126,27 @@ try:
     check(request("/api/v1/cqc/tasks/" + "0" * 32)[0] == 401, "anonymous API denied")
     check(request("/cqc-review")[0] == 302, "anonymous page redirected")
     owner, other = session("admin"), session("member")
+    if args.check_library_permissions:
+        allowed_ids = container_python('report-audit-platform', "import json\nfrom app.core.config import get_settings\nprint('SMOKE_JSON:'+json.dumps(get_settings().cqc_library.admin_user_ids.split(',')))")
+        check(len(allowed_ids) == 3 and len(set(allowed_ids)) == 3, 'exactly three library managers configured')
+        route = '/api/v1/cqc-library'
+        code, body, _ = request(route, owner)
+        check(code == 200, 'authorized library catalog')
+        before = json.loads(body)
+        cases = [(owner if index == 0 else session('user:' + uid), True)
+                 for index, uid in enumerate(allowed_ids)]
+        cases.extend([(session('other-admin'), False), (other, False)])
+        for index, (cookie, allowed) in enumerate(cases):
+            tag = f'library permission case {index + 1}'
+            code, body, _ = request('/cqc-review', cookie)
+            check(code == 200 and ('认证库管理</a>' in body.decode()) == allowed, tag + ' entry')
+            check(request('/cqc-library', cookie)[0] == (200 if allowed else 403), tag + ' page')
+            check(request(route, cookie)[0] == (200 if allowed else 403), tag + ' catalog')
+            check(upload(route + '/upload', [('file', 'invalid-library.xlsx')], cookie,
+                         values={'expected_revision': before['revision']})[0] == (422 if allowed else 403), tag + ' upload authorization')
+            payload = json.dumps({'version': before['active'], 'expected_revision': before['revision']}).encode()
+            check(request(route + '/activate', cookie, payload, 'application/json')[0] == (200 if allowed else 403), tag + ' activate authorization')
+        check(json.loads(request(route, owner)[1]) == before, 'permission tests preserve library catalog')
     if args.pcb_library_file:
         route = '/api/v1/cqc-library'
         check(request('/cqc-library', owner)[0] == 200, 'library admin page')

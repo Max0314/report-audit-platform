@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 
 import yaml
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -90,6 +90,24 @@ class HardwareAuthSettings(BaseSettings):
         env_prefix = "HARDWARE_AUTH_"
 
 
+class CqcLibrarySettings(BaseSettings):
+    """认证库独立授权；仅使用门户数据库用户 ID，不继承门户角色。"""
+    admin_user_ids: str = Field(default="", description="逗号分隔的门户用户 ID；空值拒绝所有管理访问")
+
+    @field_validator("admin_user_ids")
+    @classmethod
+    def validate_admin_user_ids(cls, value):
+        if not value.strip():
+            return ""
+        ids = [item.strip() for item in value.split(",")]
+        if any(not item.isascii() or not item.isdecimal() or int(item) <= 0 for item in ids):
+            raise ValueError("CQC_LIBRARY_ADMIN_USER_IDS 必须为逗号分隔的正整数用户 ID")
+        return ",".join(sorted({str(int(item)) for item in ids}, key=int))
+
+    class Config:
+        env_prefix = "CQC_LIBRARY_"
+
+
 class ValidationRulesSettings(BaseSettings):
     """验证规则配置"""
     # 标准测试项目清单（为空时跳过完整性检查）
@@ -164,6 +182,7 @@ class Settings(BaseSettings):
     file_storage: FileStorageSettings = Field(default_factory=FileStorageSettings)
     object_storage: ObjectStorageSettings = Field(default_factory=ObjectStorageSettings)
     hardware_auth: HardwareAuthSettings = Field(default_factory=HardwareAuthSettings)
+    cqc_library: CqcLibrarySettings = Field(default_factory=CqcLibrarySettings)
     validation_rules: ValidationRulesSettings = Field(default_factory=ValidationRulesSettings)
     analysis: AnalysisSettings = Field(default_factory=AnalysisSettings)
 
