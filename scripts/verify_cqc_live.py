@@ -34,17 +34,19 @@ def container_python(container, code):
 
 def session(role):
     allowed_ids = container_python("report-audit-platform", "import json\nfrom app.core.config import get_settings\nprint('SMOKE_JSON:'+json.dumps(get_settings().cqc_library.admin_user_ids.split(',')))")
+    jti = 'cqc-smoke-' + secrets.token_hex(16)
+    sessions.append({'jti': jti})  # 创建失败也进入 finally 清理；不触碰用户原有会话。
     data = container_python("stack-htmlsystm", '''
-import os,json
+import json,time
 from server.neo_user_key import get_shared_user_manager
 from server.auth.capabilities import user_capabilities
-from server.auth.login_service import issue_session_for_user
-from server.auth.session_index import MAX_SESSIONS_PER_USER
+from server.auth.session_index import get_user_session_rev
 from server.db_adapter import get_connection_pool
-from server.auth.signed_session import verify_token,AUTH_TOKEN_COOKIE
+from server.auth import signed_session
 manager=get_shared_user_manager()
 role=''' + repr(role) + '''
 allowed_ids=''' + repr(allowed_ids) + '''
+jti=''' + repr(jti) + '''
 if role=='admin':
  user=manager.get_user_by_id(int(allowed_ids[0]))
 elif role.startswith('user:'):
@@ -57,15 +59,15 @@ else:
  user=next(u for u in (manager.get_user_by_id(i) for i in ids)
            if str(u['id']) not in allowed_ids and bool(user_capabilities(u)['canManageModelConfig'])==(role=='other-admin'))
 assert user and user.get('status')=='active'
+# 仅本次离线验收进程的短期令牌；不改变门户进程配置、账号角色或会话配额。
+# 不调用会淘汰旧会话的 register_session，临时索引由外层 finally 精确撤销。
+signed_session.TOKEN_TTL_SEC=600
+token=signed_session.issue_token(user,jti,get_user_session_rev(user['id']))
 with get_connection_pool().get_cursor() as c:
- c.execute('SELECT COUNT(*) AS n FROM auth_session_index WHERE user_id=%s',(user['id'],))
- assert c.fetchone()['n'] < MAX_SESSIONS_PER_USER
-body,headers=issue_session_for_user(user,secure=False)
-cookie='; '.join(h.split(';')[0] for h in headers if not h.startswith('session_id='))
-token=next(h.split(';')[0].split('=',1)[1] for h in headers if h.startswith(AUTH_TOKEN_COOKIE+'='))
-print('SMOKE_JSON:'+json.dumps({'cookie':cookie,'jti':verify_token(token)['jti']}))
+ c.execute('INSERT INTO auth_session_index (jti,user_id,created_at) VALUES (%s,%s,%s)',(jti,user['id'],time.time()))
+cookie=signed_session.AUTH_TOKEN_COOKIE+'='+token
+print('SMOKE_JSON:'+json.dumps({'cookie':cookie}))
 ''')
-    sessions.append(data)
     return data["cookie"]
 
 
