@@ -23,20 +23,23 @@
         revision = state.revision;
         const active = state.versions.find(v => v.version === state.active);
         document.getElementById('libraryCurrent').textContent = active ?
-            `当前：${active.filename} · ${active.record_count} 条 PCB · 版本 ${active.version.slice(0, 12)}` : '尚未配置认证库，请上传首个版本。';
+            `当前库：${active.record_count} 条 PCB · 版本 ${active.version.slice(0, 12)} · 最近导入：${active.filename}` : '尚未配置认证库，请上传首个版本。';
         const versions = document.getElementById('libraryVersions'); versions.replaceChildren();
         for (const v of [...state.versions].reverse()) {
             const card = document.createElement('article'); card.className = 'library-version';
             line(card, `${v.version === state.active ? '当前生效 · ' : ''}${v.filename} · ${v.record_count} 条 · ${v.version.slice(0, 12)}`);
             line(card, `上传时间：${date(v.uploaded_at)} · 操作人：${v.uploaded_by}`);
             if (v.version !== state.active) {
-                const button = document.createElement('button'); button.className = 'btn'; button.textContent = '启用此版本';
-                button.addEventListener('click', () => update(async () => {
+                const button = document.createElement('button'); button.className = 'btn'; button.textContent = '回滚到此完整库';
+                button.addEventListener('click', () => {
+                    if (!window.confirm('回滚将恢复该版本的完整认证库，之后新增或修改的记录不会保留。是否继续？')) return;
+                    update(async () => {
                     await read(await fetch(url('/activate'), {method: 'POST', headers: {
                         'Content-Type': 'application/json', 'X-CSRF-Token': window.ReportAudit.csrfToken(),
                     }, body: JSON.stringify({version: v.version, expected_revision: revision})}));
                     status.textContent = `已启用版本 ${v.version.slice(0, 12)}，后续审核立即生效。`;
-                }));
+                    });
+                });
                 card.appendChild(button);
             }
             versions.appendChild(card);
@@ -65,10 +68,10 @@
             if (result.errors) {
                 status.textContent = `校验失败（${result.error_count} 项），未更新认证库。`;
                 errors.textContent = result.errors.join('\n');
-            } else if (result.unchanged) status.textContent = '文件与当前版本相同，无需更新。';
+            } else if (result.unchanged) status.textContent = '本次导入记录与当前库一致，无需更新；未提及的记录保持不变。';
             else {
                 const d = result.changes;
-                status.textContent = `更新成功：新增 ${d.added} 条、修改 ${d.modified} 条、移除 ${d.removed} 条、不变 ${d.unchanged} 条。`;
+                status.textContent = `增量更新成功：新增 ${d.added} 条、修改 ${d.modified} 条、保留不变 ${d.unchanged} 条；未删除任何记录。`;
             }
         });
     });

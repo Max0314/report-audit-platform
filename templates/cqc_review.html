@@ -121,7 +121,7 @@
                 `数据库条目未在报告中匹配 ${check.summary.missing_records} 条。`;
             summary.style.color = check.status === '通过' ? 'var(--success-color)' : 'var(--error-color)';
             if (check.database) {
-                source.textContent = `数据库：${check.database.filename} · ${check.database.sheet} · ` +
+                source.textContent = `认证库（最近导入：${check.database.filename}） · ${check.database.sheet} · ` +
                     `${check.database.record_count} 条记录 · 版本 ${(check.database.version || "").slice(0, 12)}。仅核对与认证库的一致性，不代表证书有效性认证。`;
             }
             for (const message of [...check.database_errors, ...check.warnings]) {
@@ -140,7 +140,10 @@
                 addLine(card, `${item.report.part_number} · ${item.status}：`, item.report.manufacturer || '制造商未识别');
                 addLine(card, '报告来源：', `PDF 第 ${item.report.page} 页`);
                 if (item.database_record) {
-                    addLine(card, '数据库来源：', `${item.database_record.sheet} 第 ${item.database_record.row} 行`);
+                    const origin = item.database_record.source || item.database_record;
+                    addLine(card, '数据库来源：', `${origin.filename || check.database?.filename || ''} · ${origin.sheet} 第 ${origin.row} 行`);
+                } else if (item.candidate_sources?.length) {
+                    addLine(card, '候选数据库来源：', item.candidate_sources.map(origin => `${origin.filename || ''} · ${origin.sheet} 第 ${origin.row} 行`).join('；'));
                 } else if (item.candidate_rows.length) {
                     addLine(card, '候选数据库行：', item.candidate_rows.join('、'));
                 }
@@ -186,7 +189,8 @@
                 card.className = 'cqc-change';
                 addLine(card, '提示：报告未匹配数据库条目：', `${record.manufacturer || '制造商缺失'} · ${record.certificate || '认证号缺失'}`);
                 addLine(card, '型号：', record.model || '数据库型号缺失');
-                addLine(card, '数据库来源：', `${record.sheet} 第 ${record.row} 行`);
+                const origin = record.source || record;
+                addLine(card, '数据库来源：', `${origin.filename || check.database?.filename || ''} · ${origin.sheet} 第 ${origin.row} 行`);
                 checks.appendChild(card);
             }
         }

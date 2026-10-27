@@ -60,7 +60,8 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(duplicate['unchanged'])
         rows = deepcopy(ROWS); rows[0][1] = 'TEST-03'; rows.pop()
         second = library.publish(workbook_bytes(rows), 'second.xlsx', 'admin', 1)
-        self.assertEqual(second['changes'], {'added': 0, 'modified': 1, 'removed': 1, 'unchanged': 0})
+        self.assertEqual(second['changes'], {'added': 0, 'modified': 1, 'removed': 0, 'unchanged': 1})
+        self.assertEqual(library.current_snapshot()['records'][1], pinned['records'][1])
         self.assertEqual(pinned['records'][0]['model'], 'TEST-01、TEST-02')
         self.assertEqual(library.current_snapshot()['records'][0]['model'], 'TEST-03')
         library.activate(first['version'], 'admin', 2)
@@ -79,8 +80,9 @@ class LibraryTests(unittest.TestCase):
     def test_storage_failure_does_not_change_active_catalog(self):
         first = library.publish(workbook_bytes(), 'valid.xlsx', 'admin', 0)
         self.store.fail_key = library.CATALOG
+        changed = deepcopy(ROWS[:1]); changed[0][1] = 'CHANGED'
         with self.assertRaises(OSError):
-            library.publish(workbook_bytes(ROWS[:1]), 'next.xlsx', 'admin', 1)
+            library.publish(workbook_bytes(changed), 'next.xlsx', 'admin', 1)
         self.assertEqual(library.catalog()['active'], first['version'])
         self.assertEqual(len(library.catalog()['versions']), 1)
 
@@ -93,6 +95,69 @@ class LibraryTests(unittest.TestCase):
             results = list(pool.map(submit, [a, b]))
         self.assertEqual(sorted(results), [False, True])
         self.assertEqual(library.catalog()['revision'], 1)
+
+    def test_incremental_add_modify_and_preserve_unmentioned_record(self):
+        library.publish(workbook_bytes(), 'initial.xlsx', 'admin', 0)
+        old = library.current_snapshot()
+        update = deepcopy(ROWS[:1]); update[0][1] = 'UPDATED'
+        new = deepcopy(ROWS[1]); new[-1] = 'CQC12345678901'
+        update.append(new)
+        result = library.publish(workbook_bytes(update), 'delta.xlsx', 'admin', 1)
+        snapshot = library.current_snapshot()
+        self.assertEqual(result['changes'], {'added': 1, 'modified': 1, 'removed': 0, 'unchanged': 1})
+        self.assertEqual(len(snapshot['records']), 3)
+        self.assertEqual(snapshot['records'][1], old['records'][1])
+        self.assertEqual(snapshot['records'][0]['source']['filename'], 'delta.xlsx')
+        self.assertEqual(snapshot['records'][1]['source']['filename'], 'initial.xlsx')
+        self.assertEqual(snapshot['records'][2]['source']['row'], 3)
+
+    def test_reimport_old_file_merges_current_state_instead_of_restoring_old_snapshot(self):
+        original = workbook_bytes()
+        first = library.publish(original, 'initial.xlsx', 'admin', 0)
+        new = deepcopy(ROWS[0]); new[-1] = 'CQC12345678901'
+        library.publish(workbook_bytes([new]), 'new.xlsx', 'admin', 1)
+        self.assertTrue(library.publish(original, 'initial.xlsx', 'admin', 2)['unchanged'])
+        changed = deepcopy(ROWS[:1]); changed[0][1] = 'CHANGED'
+        library.publish(workbook_bytes(changed), 'edit.xlsx', 'admin', 2)
+        replay = library.publish(original, 'initial.xlsx', 'admin', 3)
+        self.assertNotEqual(replay['version'], first['version'])
+        self.assertEqual(len(library.current_snapshot()['records']), 3)
+        self.assertEqual(library.current_snapshot()['records'][0]['model'], ROWS[0][1])
+        self.assertEqual(replay['changes']['removed'], 0)
+
+    def test_legacy_snapshot_retains_original_file_and_row(self):
+        records, _ = parse_database(workbook_bytes())
+        version = 'a' * 64
+        metadata = {'version': version, 'filename': 'legacy.xlsx'}
+        library.write_bytes(f'{library.ROOT}/{version}/snapshot.json', library.encoded({'metadata': metadata, 'records': records}))
+        library.write_bytes(library.CATALOG, library.encoded({'active': version, 'revision': 1, 'versions': [metadata], 'events': []}))
+        new = deepcopy(ROWS[0]); new[-1] = 'CQC12345678901'
+        library.publish(workbook_bytes([new]), 'new.xlsx', 'admin', 1)
+        snapshot = library.current_snapshot()
+        self.assertEqual(snapshot['records'][0]['source'], {'filename': 'legacy.xlsx', 'version': version, 'sheet': 'CQC认证信息', 'row': 2})
+        self.assertEqual(library.version_snapshot(version)['records'], records)
+
+    def test_merged_library_limit_rejects_without_dropping_existing_records(self):
+        rows = []
+        for n in range(1000):
+            row = deepcopy(ROWS[0]); row[-1] = 'CQC' + str(10000000000 + n); rows.append(row)
+        library.publish(workbook_bytes(rows), 'full.xlsx', 'admin', 0)
+        before = self.store.objects[library.CATALOG]
+        with self.assertRaisesRegex(ValueError, '1000'):
+            library.publish(workbook_bytes(ROWS[:1]), 'extra.xlsx', 'admin', 1)
+        self.assertEqual(self.store.objects[library.CATALOG], before)
+
+    def test_same_excel_row_in_different_imports_is_not_a_duplicate(self):
+        library.publish(workbook_bytes(ROWS[:1]), 'one.xlsx', 'admin', 0)
+        library.publish(workbook_bytes(ROWS[1:]), 'two.xlsx', 'admin', 1)
+        snapshot = library.current_snapshot()
+        self.assertEqual([r['row'] for r in snapshot['records']], [2, 2])
+        all_rows = check_pcb_components(snapshot['records'], snapshot)
+        self.assertEqual(all_rows['status'], '通过')
+        self.assertEqual(all_rows['summary']['passed'], 2)
+        one = check_pcb_components(snapshot['records'][:1], snapshot)
+        self.assertEqual(one['status'], '通过')
+        self.assertEqual(one['summary']['missing_records'], 1)
 
     def test_missing_database_or_unavailable_store_never_passes(self):
         self.assertIn('message', library.current_snapshot())
@@ -200,7 +265,8 @@ class LibraryApiTests(unittest.TestCase):
 
     def test_upload_history_activate_conflict_and_invalid(self):
         first = self.upload().json()
-        second = self.upload(workbook_bytes(ROWS[:1]), 1).json()
+        rows = deepcopy(ROWS[:1]); rows[0][1] = 'UPDATED'
+        second = self.upload(workbook_bytes(rows), 1).json()
         self.assertEqual(self.client.get('/api/v1/cqc-library').json()['active'], second['version'])
         self.assertEqual(self.upload(revision=0).status_code, 409)
         reply = self.client.post('/api/v1/cqc-library/activate', headers=self.headers,
@@ -247,7 +313,9 @@ class LibraryApiTests(unittest.TestCase):
     def test_job_uses_snapshot_captured_before_processing(self):
         first = library.publish(workbook_bytes(), 'first.xlsx', 'admin', 0)
         snapshot = library.current_snapshot()
-        library.publish(workbook_bytes(ROWS[:1]), 'next.xlsx', 'admin', 1)
+        changed = deepcopy(ROWS[:1]); changed[0][1] = 'UPDATED'
+        next_version = library.publish(workbook_bytes(changed), 'next.xlsx', 'admin', 1)
+        self.assertNotEqual(next_version['version'], first['version'])
         job = {'task_id': 'a' * 32, 'mode': 'review', 'status': 'processing',
                'owner_key': 'admin', 'source_keys': [], 'pcb_snapshot': snapshot}
         result = {'safety_components': [{**snapshot['records'][0], 'page': 1}], 'warnings': []}

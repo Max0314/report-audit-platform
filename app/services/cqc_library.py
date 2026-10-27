@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.storage import get_store, safe_filename
-from app.services.cqc_pcb import parse_database, comparable_value
+from app.services.cqc_pcb import parse_database, comparable_value, FIELD_LABELS
 
 ROOT = "libraries/cqc-pcb"
 CATALOG = ROOT + "/catalog.json"
@@ -88,25 +88,49 @@ def publish(contents, filename, actor, expected_revision):
     records, errors = parse_database(contents)
     if errors:
         return {"published": False, "errors": errors[:100], "error_count": len(errors)}
-    version = hashlib.sha256(contents).hexdigest()
+    source_sha256 = hashlib.sha256(contents).hexdigest()
     with _lock:
         state = catalog()
         if state["revision"] != expected_revision:
             raise LibraryConflict("认证库已由其他操作更新，请刷新后重试")
-        if state["active"] == version:
-            return {"published": False, "unchanged": True, "revision": state["revision"], "version": version}
-        old = version_snapshot(state["active"])["records"] if state["active"] else []
-        changes = difference(old, records)
+        previous = version_snapshot(state["active"]) if state["active"] else {"records": [], "metadata": {}}
+        old = previous["records"]
+        # 版本标识包含导入前版本，重复导入旧文件也必须基于当前库合并，不能恢复旧快照。
+        version = hashlib.sha256(encoded([state["active"], source_sha256, safe_filename(filename)])).hexdigest()
+        merged = {}
+        for record in old:
+            source = record.get("source") or {
+                "filename": previous["metadata"].get("filename"), "version": state["active"],
+                "sheet": record["sheet"], "row": record["row"],
+            }
+            merged[comparable_value("certificate", record["certificate"])] = {**record, "source": source}
+        for record in records:
+            key = comparable_value("certificate", record["certificate"])
+            if key not in merged or difference([merged[key]], [record])["modified"]:
+                merged[key] = {**record, "source": {
+                    "filename": safe_filename(filename), "version": version,
+                    "sheet": record["sheet"], "row": record["row"],
+                }}
+        merged_records = list(merged.values())
+        if len(merged_records) > 1000:
+            raise ValueError("增量合并后认证库超过 1000 条，未更新；请联系管理员处理")
+        if sum(len(record.get(field) or "") for record in merged_records for field in FIELD_LABELS) > 1000000:
+            raise ValueError("增量合并后认证库文本超过 100 万字符，未更新；请联系管理员处理")
+        changes = difference(old, merged_records)
+        if not changes["added"] and not changes["modified"]:
+            return {"published": False, "unchanged": True, "revision": state["revision"],
+                    "version": state["active"], "changes": changes}
         if not any(v["version"] == version for v in state["versions"]):
             if len(state["versions"]) >= 1000:
                 raise ValueError("认证库版本数量已达上限，请联系管理员归档")
             metadata = {"version": version, "filename": safe_filename(filename), "sheet": "CQC认证信息",
-                        "record_count": len(records), "uploaded_at": datetime.now(timezone.utc).isoformat(),
-                        "uploaded_by": actor}
+                        "record_count": len(merged_records), "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                        "uploaded_by": actor, "import_mode": "incremental", "import_count": len(records),
+                        "source_sha256": source_sha256, "parent_version": state["active"]}
             # 所有文件成功后，最后一个目录对象 PUT 同时提交当前版本和历史记录。
             write_bytes(f"{ROOT}/{version}/source.xlsx", contents,
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            write_bytes(f"{ROOT}/{version}/snapshot.json", encoded({"metadata": metadata, "records": records}))
+            write_bytes(f"{ROOT}/{version}/snapshot.json", encoded({"metadata": metadata, "records": merged_records}))
             state["versions"].append(metadata)
         else:
             version_snapshot(version)
