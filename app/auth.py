@@ -44,7 +44,7 @@ async def close_auth_client() -> None:
         _client = None
 
 
-async def _verify(cookie_header: str) -> Tuple[Optional[Dict[str, Any]], bool]:
+async def _verify(cookie_header: str, *, fresh: bool = False) -> Tuple[Optional[Dict[str, Any]], bool]:
     """返回 (用户, 校验服务是否可用)。"""
     global _client
     auth = get_settings().hardware_auth
@@ -56,13 +56,15 @@ async def _verify(cookie_header: str) -> Tuple[Optional[Dict[str, Any]], bool]:
     cache_key = hashlib.sha256(cookie_header.encode("utf-8", errors="ignore")).hexdigest()
     now = time.monotonic()
     cached = _cache.get(cache_key)
-    if cached and cached[1] > now:
+    if not fresh and cached and cached[1] > now:
         return cached[0], True
     _cache.pop(cache_key, None)
 
     if _client is None:
         _client = httpx.AsyncClient(timeout=auth.timeout_seconds)
     url = auth.internal_url.rstrip("/") + "/api/internal/neo/verify-session"
+    if fresh:
+        url += "?fresh=1"
     try:
         response = await _client.get(
             url,
@@ -82,10 +84,26 @@ async def _verify(cookie_header: str) -> Tuple[Optional[Dict[str, Any]], bool]:
     user = data.get("user") if data.get("authenticated") else None
     if not isinstance(user, dict):
         return None, True
+    user = {**user, "capabilities": data.get("capabilities", {})}
     _cache[cache_key] = (user, now + auth.cache_ttl_seconds)
     if len(_cache) > 512:
         _cache.clear()
     return user, True
+
+
+def can_manage_library(user: dict) -> bool:
+    return (user or {}).get("capabilities", {}).get("canManageModelConfig") is True
+
+
+async def require_library_admin(request: Request) -> str:
+    # 管理操作实时复核门户权限，不能依赖页面显隐或过期会话缓存。
+    user, available = await _verify(request.headers.get("cookie", ""), fresh=True)
+    if not available:
+        raise HTTPException(503, "门户权限校验暂时不可用")
+    if not user or not can_manage_library(user):
+        raise HTTPException(403, "仅管理员可管理认证库")
+    request.state.hardware_user = user
+    return current_user_key(request)
 
 
 def _external_path(request: Request) -> str:
@@ -117,6 +135,8 @@ async def hardware_auth_middleware(request: Request, call_next):
             return JSONResponse({"detail": "CSRF 校验失败"}, status_code=403)
 
     response = await call_next(request)
+    if request.url.path == "/cqc-library" or request.url.path.startswith("/api/v1/cqc-library"):
+        response.headers["Cache-Control"] = "private, no-store"
     if not request.cookies.get("csrf_token"):
         forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
         response.set_cookie(

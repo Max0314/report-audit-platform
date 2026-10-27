@@ -16,6 +16,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from app.core import get_logger, get_settings, init_directories, BaseAPIException
 from app.routers import review_router, analysis_router
 from app.routers.cqc import router as cqc_router
+from app.routers.cqc_library import router as cqc_library_router
+from app.auth import can_manage_library, require_library_admin
 from app.middleware import RateLimiter
 from app.auth import close_auth_client, hardware_auth_middleware, validate_auth_config
 from app.storage import check_storage_ready
@@ -93,7 +95,8 @@ templates = Jinja2Templates(directory="templates")
 def _template_context(request: Request) -> dict:
     settings = get_settings()
     base_path = settings.hardware_auth.public_prefix.rstrip("/") if settings.hardware_auth.enabled else ""
-    return {"request": request, "base_path": base_path}
+    return {"request": request, "base_path": base_path,
+            "can_manage_library": can_manage_library(getattr(request.state, "hardware_user", {}))}
 
 
 # ============ 页面路由 ============
@@ -143,6 +146,13 @@ async def cqc_compare_page(request: Request):
 app.include_router(review_router)
 app.include_router(analysis_router)
 app.include_router(cqc_router)
+app.include_router(cqc_library_router)
+
+
+@app.get("/cqc-library", response_class=HTMLResponse)
+async def cqc_library_page(request: Request):
+    await require_library_admin(request)
+    return templates.TemplateResponse("cqc_library.html", _template_context(request))
 
 
 # ============ Favicon（防止浏览器请求favicon导致延迟）============

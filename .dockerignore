@@ -23,3 +23,5 @@ data/archive/*
 !data/uploads/.gitkeep
 !data/temp/.gitkeep
 !data/archive/.gitkeep
+
+data/library-development/

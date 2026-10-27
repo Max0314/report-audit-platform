@@ -15,6 +15,8 @@ from app.auth import current_user_key, require_task_owner
 from app.storage import get_store, persist_upload, rollback_objects, safe_filename
 from app.services.cqc_report import analyze_cqc_pdf
 from app.services.cqc_compare import compare_cqc_pdfs
+from app.services.cqc_library import current_snapshot
+from app.services.cqc_pcb import check_pcb_components
 
 router = APIRouter(prefix="/api/v1", tags=["CQC"])
 MAX_FILE_BYTES = 50 * 1024 * 1024
@@ -29,7 +31,7 @@ def artifact_key(owner: str, task_id: str) -> str:
 
 
 def public_job(job: dict) -> dict:
-    return {k: v for k, v in job.items() if k not in ("owner_key", "created", "source_keys", "ai")}
+    return {k: v for k, v in job.items() if k not in ("owner_key", "created", "source_keys", "ai", "pcb_snapshot")}
 
 
 async def save_result(job: dict) -> None:
@@ -47,21 +49,25 @@ async def run_job(job: dict, files: list[tuple[str, bytes]]) -> None:
         if job["mode"] == "review":
             result = await loop.run_in_executor(_executor, analyze_cqc_pdf, files[0][1])
             result["filename"] = files[0][0]
+            result["pcb_check"] = await loop.run_in_executor(
+                _executor, check_pcb_components, result["safety_components"], job["pcb_snapshot"])
         else:
             result = await loop.run_in_executor(_executor, compare_cqc_pdfs,
                                                 files[0][1], files[1][1], files[0][0], files[1][0])
         files.clear()
         job["result"] = result
+        # 归档成功后再发布完成状态，避免用户读到尚未持久化的结果。
+        await save_result({**job, "status": "completed"})
         job["status"] = "completed"
-        await save_result(job)
     except ValueError as exc:
-        job.update(status="failed", message=str(exc)[:300])
         await rollback_objects(job["source_keys"])
+        job.update(status="failed", message=str(exc)[:300])
     except Exception:
-        job.update(status="failed", message="处理或 OSS 归档失败，请稍后重试。")
         if "result" not in job:
             await rollback_objects(job["source_keys"])
+        job.update(status="failed", message="处理或 OSS 归档失败，请稍后重试。")
     finally:
+        job.pop("pcb_snapshot", None)
         _active_owners.discard(job["owner_key"])
 
 
@@ -91,6 +97,8 @@ async def submit(request: Request, mode: str, uploads: list[UploadFile]) -> dict
         task_id = uuid.uuid4().hex
         job = {"task_id": task_id, "mode": mode, "status": "processing", "owner_key": owner,
                "created": now, "source_keys": []}
+        if mode == "review":
+            job["pcb_snapshot"] = await asyncio.to_thread(current_snapshot)
         _jobs[task_id] = job
         task = asyncio.create_task(run_job(job, files))
         _running.add(task)

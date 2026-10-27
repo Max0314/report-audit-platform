@@ -13,6 +13,7 @@ FIELD_ENDINGS = FIELD_NAMES + (
     "样品数量", "样品来源", "委托人", "委托人地址", "生产者",
     "生产者地址", "生产企业", "生产企业地址", "试验依据标准",
     "试验结论", "安全主检", "安全审核", "EMC 主检", "备注",
+    "报告编号", "申请编号",
 )
 FIELD_END_PATTERN = "|".join(re.escape(name) for name in FIELD_ENDINGS)
 CHANGE_ROW_PATTERN = re.compile(
@@ -117,28 +118,83 @@ def extract_changes(pages: list[str]) -> tuple[list[dict], int | None]:
     return [], None
 
 
+def component_kind(body: str) -> str | None:
+    head = re.sub(r"^/\s*/\s*", "", normalize_text(body))[:80]
+    if re.match(r"印制板|印制线路板|印刷线路板|PCB(?:\s|[（(])", head, re.I):
+        return "pcb"
+    if re.match(r"电源适配器|开关电源适配器", head):
+        return "adapter"
+    if head.startswith("外壳"):
+        return "shell"
+    if head.startswith("激光模块"):
+        return "laser"
+    return None
+
+
 def extract_component_rows(pages: list[str], start_page: int = 1) -> list[dict]:
-    rows = []
+    # 统一扫描两种编号和无编号续行，避免进入某种模式后忽略另一种版式。
+    pattern = re.compile(
+        r"^[ \t]*(?:(?P<explicit>[1-9]\d?-\d+|3)[ \t]+"
+        r"|(?P<group>[1-9]\d?)\.[ \t]*\n?[ \t]*/[ \t]*/[ \t]*"
+        r"|(?P<continuation>/[ \t]*/)[ \t]*)", re.M)
+    rows, counts, kinds = [], {}, {}
+    group = None
     for page_number, text in enumerate(pages, start_page):
+        if "产品电气原理图" in text or "电磁兼容关键件清单" in text:
+            group = None
+            continue
         if "-P-S" not in text and "安全关键件清单" not in text:
             continue
-        for part_number, body in COMPONENT_ROW_PATTERN.findall(text):
-            rows.append({"part_number": part_number, "body": body.strip(), "page": page_number})
+        starts = list(pattern.finditer(text))
+        for index, match in enumerate(starts):
+            body = text[match.end():starts[index + 1].start() if index + 1 < len(starts) else len(text)].strip()
+            explicit = match.group("explicit")
+            if explicit:
+                group = explicit.split("-")[0]
+                counts[group] = max(counts.get(group, 0), int(explicit.split("-")[1]) if "-" in explicit else 1)
+                number = explicit
+            else:
+                group = match.group("group") or group
+                if not group:
+                    continue
+                counts[group] = counts.get(group, 0) + 1
+                number = f"{group}-{counts[group]}"
+            kind = component_kind(body) or kinds.get(group)
+            if kind:
+                kinds[group] = kind
+            rows.append({"part_number": number, "body": body, "page": page_number, "kind": kind})
     return rows
 
 
-def extract_component_details(body: str, part_number: str) -> dict:
+def extract_certificate(body: str) -> str | None:
+    # 优先标签，其次 CQC 前缀，最后只在标准之后寻找无标签的长数字。
+    # 长度按去掉换行后的数字计算，不能依赖正则匹配的空白数量。
+    labeled = re.search(r"证书号\s*[:：]\s*((?:CQC\s*)?\d[\d \t\r\n]*)", body, re.I)
+    candidates = [labeled.group(1)] if labeled else re.findall(r"(?<![\w-])CQC\s*\d[\d \t\r\n]*", body, re.I)
+    if not candidates:
+        standards = list(re.finditer(r"GB(?:/T)?\s*\d+(?:\.\d+)?-\d{4}", body))
+        if standards:
+            candidates = re.findall(r"(?<![\w.-])\d[\d \t\r\n]*(?![\w.-])", body[standards[-1].end():])
+    valid = []
+    for candidate in candidates:
+        value = re.sub(r"\s+", "", candidate).upper()
+        if re.fullmatch(r"CQC\d{8,16}|\d{14,20}", value):
+            valid.append(value)
+    return valid[0] if len(set(valid)) == 1 else None
+
+
+def extract_component_details(body: str, part_number: str, kind: str | None = None) -> dict:
     text = normalize_text(body)
     standards = list(dict.fromkeys(re.findall(r"GB(?:/T)?\s*\d+(?:\.\d+)?-\d{4}", text)))
     standard_start = re.search(r"GB(?:/T)?\s*\d", text)
     specification_match = None
-    if part_number.startswith("1-"):
+    if kind == "adapter" or (kind is None and part_number.startswith("1-")):
         specification_match = re.search(r"输入[:：].*?[)）]", text)
-    elif part_number.startswith("2-"):
-        specification_match = re.search(r"V-0(?:级)?", text)
-    elif part_number == "3" or part_number.startswith("3-"):
+    elif kind == "pcb" or (kind is None and part_number.startswith("2-")):
+        specification_match = re.search(r"(?:V-[012]|HB)(?:\s*级)?", text)
+    elif kind == "shell" or (kind is None and (part_number == "3" or part_number.startswith("3-"))):
         specification_match = re.search(r"ABS.*?试验|ABS", text)
-    elif part_number.startswith("4-"):
+    elif kind == "laser" or (kind is None and part_number.startswith("4-")):
         specification_match = re.search(r"波长[:：].*?Class\s*1", text, re.I)
 
     companies = []
@@ -166,19 +222,20 @@ def extract_safety_components(pages: list[str]) -> list[dict]:
     for row in extract_component_rows(pages[start:end], start + 1):
         part_number = row["part_number"]
         body = row["body"]
-        if part_number.startswith("1-"):
+        kind = row.get("kind") or {"1": "adapter", "2": "pcb", "3": "shell", "4": "laser"}.get(part_number.split("-")[0], "unknown")
+        if kind == "adapter":
             name = "开关电源适配器" if re.search(r"开关电源适\s*配器", body) else "电源适配器"
             model_match = re.search(r"(?:开关电源适\s*配器|电源适配器)\s+(\S+)", body)
-        elif part_number.startswith("2-"):
+        elif kind == "pcb":
             name = "印制板基材（PCB）"
             model_match = re.search(
-                r"^(?:/\s*/\s*)?(?:印制板基材\s*[（(]PCB[）)])?\s*(.*?)\s+V-0(?:\s*级)?(?=\s|$)",
+                r"^(?:/\s*/\s*)?(?:(?:印制板基材|印制线路板|印刷线路板)\s*(?:[（(]PCB[）)])?)?\s*(.*?)\s+(?:V-[012]|HB)(?:\s*级)?(?=\s|$)",
                 body, re.S,
             )
-        elif part_number == "3" or part_number.startswith("3-"):
+        elif kind == "shell":
             name = "外壳"
             model_match = re.search(r"^(?:/\s*/\s*)?(?:外壳\s+)?(\S+)", body)
-        else:
+        elif kind == "laser":
             laser_match = re.search(r"激光\s*模块\s*[（(]([^）)]*)[）)]", body)
             name = f"激光模块（{laser_match.group(1).strip()}）" if laser_match else "激光模块"
             model_match = re.search(
@@ -186,12 +243,11 @@ def extract_safety_components(pages: list[str]) -> list[dict]:
                 body, re.S,
             )
 
+        else:
+            name, model_match = "未识别关键件类型", None
         model = normalize_text(model_match.group(1)) if model_match else "未识别"
         model = re.sub(r"-\s+(?=[A-Za-z0-9])", "-", model)
-        certificate_match = re.search(r"证书号\s*[:：]\s*(CQC\s*)?(\d[\d\s]{6,24})", body)
-        certificate = None
-        if certificate_match:
-            certificate = (certificate_match.group(1) or "").strip() + re.sub(r"\s+", "", certificate_match.group(2))
+        certificate = extract_certificate(body)
         remark_match = re.search(r"原报告确认|经核查[，,]?\s*无需\s*试验|[（(](?:主用|备用)[）)]", body)
         components.append({
             "part_number": part_number,
@@ -201,7 +257,7 @@ def extract_safety_components(pages: list[str]) -> list[dict]:
             "remark": normalize_text(remark_match.group()) if remark_match else None,
             "page": row["page"],
             "raw": body,
-            **extract_component_details(body, part_number),
+            **extract_component_details(body, part_number, kind),
         })
     return components
 

@@ -38,3 +38,21 @@ def write_fixtures(directory):
     for value in (5.0, 5.1, 5.2):
         sheet.append(["输出电压", value, "合格", "合成数据，仅用于服务验收"])
     workbook.save(directory / "synthetic.xlsx")
+
+
+def pcb_pdf(record, model="SYNTHETIC-PCB-01"):
+    """用已授权认证库中的单条记录生成测试 PDF，不冒充真实认证报告。"""
+    import textwrap
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    output = io.BytesIO()
+    canvas = Canvas(output)
+    lines = ["合成验收报告（仅测试，不作认证使用）", "样品名称：合成验收产品", f"样品型号：{model}",
+             "收样日期：2026年10月01日", "完成日期：2026年10月02日", "报告编号：SYNTHETIC-P-S", "安全关键件清单",
+             "1. / / 印制板基材（PCB）"]
+    for value in (record['model'], record['specification'], record['manufacturer'], record['factory'],
+                  record['standard'], record['certificate']):
+        lines.extend(textwrap.wrap(value, width=55, break_long_words=False, break_on_hyphens=False) or [''])
+    canvas.setFont("STSong-Light", 11)
+    for index, line in enumerate(lines): canvas.drawString(40, 800 - index * 25, line)
+    canvas.showPage(); canvas.save()
+    return output.getvalue()

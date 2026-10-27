@@ -40,6 +40,7 @@
         <div class="container">
             <section class="card">
                 <h1 class="card-title">CQC单报告审核</h1>
+                {% if can_manage_library %}<a class="btn" href="{{ base_path }}/cqc-library">认证库管理</a>{% endif %}
                 <p class="card-subtitle">上传一份包含“变更确认表”的 CQC PDF 报告，提取样品信息及报告明确记载的增减内容。</p>
             </section>
             <section class="card">
@@ -73,6 +74,12 @@
                     </div>
                 </section>
                 <section class="card">
+                    <h2 class="card-title">PCB 认证库核对</h2>
+                    <p>库中有但报告没有的条目仅作提示，不据此判定不通过。</p>
+                    <p id="pcbSummary" role="status"></p><p id="pcbSource" class="cqc-muted"></p>
+                    <div id="pcbWarnings" class="cqc-list"></div><div id="pcbChecks" class="cqc-list"></div>
+                </section>
+                <section class="card">
                     <h2 class="card-title">图片漏贴检查</h2>
                     <p class="card-subtitle">核对照片标题与 PDF 中实际嵌入的图像；不能据此判断照片内容是否贴错。</p>
                     <p id="photoSummary" style="margin-top: 12px;"></p>
@@ -96,7 +103,96 @@
             container.appendChild(paragraph);
         }
 
+        function showPcbResults(check) {
+            const summary = document.getElementById('pcbSummary');
+            const source = document.getElementById('pcbSource');
+            const warnings = document.getElementById('pcbWarnings');
+            const checks = document.getElementById('pcbChecks');
+            warnings.replaceChildren();
+            checks.replaceChildren();
+            source.textContent = '';
+            if (!check) {
+                summary.textContent = '此历史结果未执行 PCB 认证库核对，可重新上传报告审核。';
+                summary.style.color = 'var(--error-color)';
+                return;
+            }
+            summary.textContent = `${check.status}：报告提取 ${check.summary.total} 条 PCB，` +
+                `通过 ${check.summary.passed} 条，异常 ${check.summary.failed} 条，` +
+                `数据库条目未在报告中匹配 ${check.summary.missing_records} 条。`;
+            summary.style.color = check.status === '通过' ? 'var(--success-color)' : 'var(--error-color)';
+            if (check.database) {
+                source.textContent = `数据库：${check.database.filename} · ${check.database.sheet} · ` +
+                    `${check.database.record_count} 条记录 · 版本 ${(check.database.version || "").slice(0, 12)}。仅核对与认证库的一致性，不代表证书有效性认证。`;
+            }
+            for (const message of [...check.database_errors, ...check.warnings]) {
+                const warning = document.createElement('div');
+                warning.className = 'cqc-photo-issue';
+                warning.textContent = message;
+                warnings.appendChild(warning);
+            }
+            const labels = {
+                name: '关键件名称', model: '型号', specification: '规格/材料',
+                manufacturer: '制造商', factory: '生产厂', standard: '认证标准', certificate: '认证号',
+            };
+            for (const item of check.checks) {
+                const card = document.createElement('div');
+                card.className = 'cqc-change';
+                addLine(card, `${item.report.part_number} · ${item.status}：`, item.report.manufacturer || '制造商未识别');
+                addLine(card, '报告来源：', `PDF 第 ${item.report.page} 页`);
+                if (item.database_record) {
+                    addLine(card, '数据库来源：', `${item.database_record.sheet} 第 ${item.database_record.row} 行`);
+                } else if (item.candidate_rows.length) {
+                    addLine(card, '候选数据库行：', item.candidate_rows.join('、'));
+                }
+                for (const issue of item.issues) addLine(card, '问题：', issue.message);
+                if (item.missing_models.length) addLine(card, '报告缺少型号：', item.missing_models.join('、'));
+                if (item.extra_models.length) addLine(card, '数据库未登记型号：', item.extra_models.join('、'));
+                const details = document.createElement('details');
+                details.open = item.status !== '通过';
+                const title = document.createElement('summary');
+                title.textContent = '查看报告与数据库逐字段对照';
+                const table = document.createElement('table');
+                table.className = 'cqc-table';
+                const header = document.createElement('tr');
+                for (const value of ['字段', '报告值', '数据库值', '结果']) {
+                    const cell = document.createElement('th');
+                    cell.textContent = value;
+                    header.appendChild(cell);
+                }
+                table.appendChild(header);
+                for (const [field, label] of Object.entries(labels)) {
+                    const row = document.createElement('tr');
+                    const issues = item.issues.filter(issue => issue.field === field);
+                    const values = [
+                        label, item.report[field] || '未提取到', item.database_record?.[field] || '—',
+                        issues.length ? issues.map(issue => issue.kind).join('、') : item.database_record ? '一致' : '未核对',
+                    ];
+                    for (const value of values) {
+                        const cell = document.createElement('td');
+                        cell.textContent = value;
+                        row.appendChild(cell);
+                    }
+                    table.appendChild(row);
+                }
+                const wrapper = document.createElement('div');
+                wrapper.className = 'cqc-table-wrap';
+                wrapper.appendChild(table);
+                details.append(title, wrapper);
+                card.appendChild(details);
+                checks.appendChild(card);
+            }
+            for (const record of check.missing_records) {
+                const card = document.createElement('div');
+                card.className = 'cqc-change';
+                addLine(card, '提示：报告未匹配数据库条目：', `${record.manufacturer || '制造商缺失'} · ${record.certificate || '认证号缺失'}`);
+                addLine(card, '型号：', record.model || '数据库型号缺失');
+                addLine(card, '数据库来源：', `${record.sheet} 第 ${record.row} 行`);
+                checks.appendChild(card);
+            }
+        }
+
         function showResults(data) {
+            showPcbResults(data.pcb_check);
             document.getElementById('reportInfo').textContent = `${data.filename} · 共 ${data.page_count} 页`;
             const fields = document.getElementById('fields');
             fields.replaceChildren();
