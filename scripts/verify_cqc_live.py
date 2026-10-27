@@ -18,10 +18,12 @@ parser.add_argument("--fixtures", required=True)
 parser.add_argument("--existing-only", action="store_true", help="只复验原 Excel 功能，跳过 CQC 规则检查")
 parser.add_argument("--pcb-library-file", help="明确指定要正式导入的认证库 Excel；不自动清理正式库")
 parser.add_argument("--check-library-permissions", action="store_true", help="验证独立授权名单、页面及管理 API，不变更认证库")
+parser.add_argument("--check-library-incremental", action="store_true", help="只重导当前库的一条记录，验证其余记录保留且不生成新版本")
 args = parser.parse_args()
 base = args.base_url.rstrip("/")
 fixtures = Path(args.fixtures)
 sessions, cleanup_keys = [], []
+temporary_files = []
 
 
 def container_python(container, code):
@@ -128,6 +130,35 @@ try:
     check(request("/api/v1/cqc/tasks/" + "0" * 32)[0] == 401, "anonymous API denied")
     check(request("/cqc-review")[0] == 302, "anonymous page redirected")
     owner, other = session("admin"), session("member")
+    if args.check_library_incremental:
+        route = '/api/v1/cqc-library'
+        code, body, _ = request(route, owner)
+        check(code == 200, 'incremental library catalog')
+        original = json.loads(body)
+        active = next(v for v in original['versions'] if v['version'] == original['active'])
+        check(active['record_count'] > 1, 'incremental preservation test has multiple existing records')
+        sample = container_python('report-audit-platform', '''
+import json,io,base64
+from openpyxl import Workbook
+from app.services.cqc_library import current_snapshot
+from app.services.cqc_pcb import HEADER_NAMES
+s=current_snapshot(); r=s['records'][0]
+w=Workbook(); sheet=w.active; sheet.title='CQC认证信息'
+sheet.append(list(HEADER_NAMES.values())); sheet.append([r[f] for f in HEADER_NAMES])
+b=io.BytesIO(); w.save(b); w.close()
+print('SMOKE_JSON:'+json.dumps({'file':base64.b64encode(b.getvalue()).decode()}))
+''')
+        import base64
+        filename = 'incremental-check-' + secrets.token_hex(8) + '.xlsx'
+        temp = fixtures / filename
+        temporary_files.append(temp)
+        temp.write_bytes(base64.b64decode(sample['file']))
+        code, body, _ = upload(route + '/upload', [('file', filename)], owner,
+                              values={'expected_revision': original['revision']})
+        check(code == 200 and json.loads(body).get('unchanged'), 'single-row incremental import preserves unmentioned records')
+        check(json.loads(request(route, owner)[1]) == original, 'incremental no-op preserves full catalog and version')
+        code, body, _ = request('/cqc-library', owner)
+        check(code == 200 and '按认证号增量更新' in body.decode() and '回滚会恢复当时的完整库' in body.decode(), 'incremental and full rollback explanations')
     if args.check_library_permissions:
         allowed_ids = container_python('report-audit-platform', "import json\nfrom app.core.config import get_settings\nprint('SMOKE_JSON:'+json.dumps(get_settings().cqc_library.admin_user_ids.split(',')))")
         check(len(allowed_ids) == 3 and len(set(allowed_ids)) == 3, 'exactly three library managers configured')
@@ -248,6 +279,8 @@ print('SMOKE_JSON:'+json.dumps({'owner_hash':hashlib.sha256(str(key).encode()).h
             check(code == 200 and body.startswith(b"PK"), "existing review export")
         check(request(f"/api/v1/{mode}/result/{task_id}", other)[0] == 404, "existing owner isolation " + mode)
 finally:
+    for temp in temporary_files:
+        temp.unlink(missing_ok=True)
     try:
         if cleanup_keys:
             cleaned = container_python("report-audit-platform", "import json\nfrom app.storage import get_store\ns=get_store()\nkeys=" + repr(cleanup_keys) + "\nfor k in keys: s.delete(k)\nprint('SMOKE_JSON:'+json.dumps({'deleted':len(keys)}))")

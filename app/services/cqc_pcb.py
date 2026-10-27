@@ -171,12 +171,13 @@ def check_pcb_components(components: list[dict], snapshot: dict) -> dict:
         return result
     records = snapshot["records"]
     result["database"] = snapshot["metadata"]
-    used_rows = set()
+    used_certificates = set()
     for component in pcb_components:
         check = {
             "report": component,
             "database_record": None,
             "candidate_rows": [],
+            "candidate_sources": [],
             "status": "通过",
             "issues": [],
             "missing_models": [],
@@ -184,6 +185,9 @@ def check_pcb_components(components: list[dict], snapshot: dict) -> dict:
         }
         candidates = find_candidates(component, records)
         check["candidate_rows"] = [record["row"] for record in candidates]
+        check["candidate_sources"] = [record.get("source") or {
+            "filename": snapshot["metadata"].get("filename"), "sheet": record["sheet"], "row": record["row"],
+        } for record in candidates]
         record = candidates[0] if len(candidates) == 1 else None
         check["database_record"] = record
         for field, label in FIELD_LABELS.items():
@@ -197,11 +201,12 @@ def check_pcb_components(components: list[dict], snapshot: dict) -> dict:
                     "field": field, "kind": "不一致", "message": f"{label}与数据库不一致",
                 })
         if record:
-            if record["row"] in used_rows:
+            certificate_key = comparable_value("certificate", record["certificate"])
+            if certificate_key in used_certificates:
                 check["issues"].append({
                     "field": "record", "kind": "重复", "message": "报告重复列出同一数据库 PCB 条目",
                 })
-            used_rows.add(record["row"])
+            used_certificates.add(certificate_key)
             report_models = model_keys(component.get("model"))
             database_models = model_keys(record["model"])
             check["missing_models"] = [model for model in split_models(record["model"])
@@ -218,7 +223,8 @@ def check_pcb_components(components: list[dict], snapshot: dict) -> dict:
                 "信息缺失" if any(issue["kind"] == "缺失" for issue in check["issues"]) else "不一致"
             )
         result["checks"].append(check)
-    result["missing_records"] = [record for record in records if record["row"] not in used_rows]
+    result["missing_records"] = [record for record in records
+                                 if comparable_value("certificate", record["certificate"]) not in used_certificates]
     result["summary"].update({
         "passed": sum(check["status"] == "通过" for check in result["checks"]),
         "failed": sum(check["status"] != "通过" for check in result["checks"]),
