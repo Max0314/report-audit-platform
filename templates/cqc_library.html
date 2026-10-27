@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>认证库管理 - 硬件研发部测试报告审核平台</title>
+    <link rel="stylesheet" href="{{ base_path }}/static/css/style.css">
+    <link rel="stylesheet" href="{{ base_path }}/static/css/cqc-nav.css?v=4">
+    <script src="{{ base_path }}/static/js/auth.js"></script>
+    <style>
+        .library-actions { display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-top:20px; }
+        .library-version { border-top:1px solid var(--border-color); padding:16px 0; overflow-wrap:anywhere; }
+        #libraryErrors { white-space:pre-wrap; margin-top:16px; color:var(--error-color); }
+        #libraryStatus, #libraryCurrent { margin:16px 0; overflow-wrap:anywhere; }
+    </style>
+</head>
+<body>
+<header class="header"><div class="container header-content">
+    <a href="{{ base_path }}/review" class="logo"><img src="{{ base_path }}/static/images/logo.jpg" alt="Logo" class="logo-img"><span class="logo-text">硬件研发部测试报告审核平台</span></a>
+    {% include 'function_nav.html' %}
+</div></header>
+<main class="main-content"><div class="container">
+    <section class="card">
+        <h1 class="card-title">认证库管理</h1>
+        <p class="card-subtitle">仅导入“CQC认证信息”工作表。上传校验通过后，自动启用整份清单的新版本；UL、BIS 工作表不参与 CQC 核对。</p>
+        <p id="libraryCurrent">正在读取当前版本…</p>
+        <form id="libraryForm" class="library-actions">
+            <label for="libraryFile">选择认证库 Excel</label>
+            <input id="libraryFile" type="file" accept=".xlsx" required>
+            <button id="librarySubmit" class="btn btn-primary" disabled>上传并启用</button>
+            <button id="libraryRefresh" class="btn" type="button">刷新版本</button>
+        </form>
+        <p>支持 .xlsx，最大 5 MB、1000 条 CQC 记录。保留名称、型号、规格/材料、商标/制造商、生产厂、认证标准、认证号七列表头，字段使用文本格式。</p>
+        <p>新审核使用新版本；正在执行及历史审核保留原版本。库内未匹配条目仅作提示。</p>
+        <p id="libraryStatus" role="status" aria-live="polite"></p><pre id="libraryErrors"></pre>
+    </section>
+    <section class="card"><h2 class="card-title">历史版本</h2><div id="libraryVersions"></div></section>
+    <section class="card"><h2 class="card-title">最近更新记录</h2><div id="libraryEvents"></div></section>
+</div></main>
+<script src="{{ base_path }}/static/js/cqc-library.js?v=1"></script>
+</body>
+</html>

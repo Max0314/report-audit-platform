@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--base-url", required=True)
 parser.add_argument("--fixtures", required=True)
 parser.add_argument("--existing-only", action="store_true", help="只复验原 Excel 功能，跳过 CQC 规则检查")
+parser.add_argument("--pcb-library-file", help="明确指定要正式导入的认证库 Excel；不自动清理正式库")
 args = parser.parse_args()
 base = args.base_url.rstrip("/")
 fixtures = Path(args.fixtures)
@@ -88,9 +89,11 @@ def check(condition, label):
     print(label + ": passed", flush=True)
 
 
-def upload(path, fields, cookie, csrf=True):
+def upload(path, fields, cookie, csrf=True, values=None):
     boundary = "CqcSmoke" + secrets.token_hex(12)
     pieces = []
+    for field, value in (values or {}).items():
+        pieces.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"\r\n\r\n{value}\r\n'.encode())
     for field, filename in fields:
         pieces.extend([f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode(),
                        (fixtures / filename).read_bytes(), b"\r\n"])
@@ -116,6 +119,32 @@ try:
     check(request("/api/v1/cqc/tasks/" + "0" * 32)[0] == 401, "anonymous API denied")
     check(request("/cqc-review")[0] == 302, "anonymous page redirected")
     owner, other = session("admin"), session("member")
+    if args.pcb_library_file:
+        route = '/api/v1/cqc-library'
+        check(request('/cqc-library', owner)[0] == 200, 'library admin page')
+        check(request('/cqc-library', other)[0] == 403, 'library member page denied')
+        check(request(route, other)[0] == 403, 'library member API denied')
+        code, body, _ = request(route, owner)
+        check(code == 200, 'library catalog')
+        state = json.loads(body)
+        library_field = [('file', args.pcb_library_file)]
+        values = {'expected_revision': state['revision']}
+        check(upload(route + '/upload', library_field, other, values=values)[0] == 403, 'library member upload denied')
+        check(upload(route + '/upload', library_field, owner, csrf=False, values=values)[0] == 403, 'library CSRF denied')
+        code, body, _ = upload(route + '/upload', library_field, owner, values=values)
+        result = json.loads(body)
+        check(code == 200 and (result.get('published') or result.get('unchanged')), 'production library imported')
+        code, body, _ = request(route, owner)
+        library_state = json.loads(body)
+        active = next(v for v in library_state['versions'] if v['version'] == library_state['active'])
+        check(active['record_count'] == 8, 'production library eight records')
+        values = {'expected_revision': library_state['revision']}
+        code, body, _ = upload(route + '/upload', library_field, owner, values=values)
+        check(code == 200 and json.loads(body).get('unchanged'), 'library duplicate unchanged')
+        code, _, _ = upload(route + '/upload', [('file', 'invalid-library.xlsx')], owner, values=values)
+        check(code == 422, 'library invalid Excel rejected')
+        code, body, _ = request(route, owner)
+        check(json.loads(body)['revision'] == library_state['revision'], 'library invalid upload preserves active version')
     portal_url = base.removesuffix("/report-audit") + "/neo/"
     with urllib.request.urlopen(urllib.request.Request(portal_url, headers={"Cookie": owner}), timeout=30) as portal:
         check(portal.status == 200 and "/login" not in portal.url, "portal return destination")
@@ -140,6 +169,9 @@ print('SMOKE_JSON:'+json.dumps({'owner_hash':hashlib.sha256(str(key).encode()).h
         check(request(path, owner)[0] == 200, "static " + path)
     check(upload("/api/v1/cqc-review/analyze", [("file", "old.pdf")], owner, csrf=False)[0] == 403, "CQC CSRF denied")
     cqc_cases = () if args.existing_only else (("review", [("file", "old.pdf")]), ("compare", [("old_file", "old.pdf"), ("new_file", "new.pdf")]))
+    if args.pcb_library_file:
+        cqc_cases = (*cqc_cases, ("review", [("file", "pcb.pdf")]),
+                     ("compare", [("old_file", "pcb.pdf"), ("new_file", "pcb.pdf")]))
     for mode, fields in cqc_cases:
         code, body, _ = upload(f"/api/v1/cqc-{mode}/analyze", fields, owner)
         check(code == 202, "CQC " + mode + " upload")
@@ -150,6 +182,14 @@ print('SMOKE_JSON:'+json.dumps({'owner_hash':hashlib.sha256(str(key).encode()).h
         route = f"/api/v1/cqc/tasks/{task_id}"
         job = wait_result(route, owner)
         check("ai" not in job, "CQC rules only " + mode)
+        if fields[0][1] == 'pcb.pdf':
+            if mode == 'review':
+                pcb = job['result']['pcb_check']
+                check(pcb['status'] == '通过' and pcb['summary']['passed'] == 1 and pcb['summary']['missing_records'] == 7,
+                      'PCB recognized; unmatched library rows advisory only')
+                check(pcb['database']['version'] == library_state['active'], 'PCB library version recorded')
+            else:
+                check(len(job['result']['safety_changes']['unchanged']) == 1, 'grouped PCB comparison recognized')
         check(bool(job["result"]["warnings"]), "missing data warnings " + mode)
         check(request(route, other)[0] == 404 and request(route + "/export", other)[0] == 404, "CQC owner isolation " + mode)
         code, body, _ = request(route + "/export", owner)
