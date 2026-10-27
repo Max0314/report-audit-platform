@@ -92,7 +92,12 @@ async def _verify(cookie_header: str, *, fresh: bool = False) -> Tuple[Optional[
 
 
 def can_manage_library(user: dict) -> bool:
-    return (user or {}).get("capabilities", {}).get("canManageModelConfig") is True
+    # 只信任门户验证接口返回的数据库 ID；姓名、username、角色均不能代替授权。
+    uid = (user or {}).get("id")
+    if type(uid) not in (int, str) or not str(uid).isascii() or not str(uid).isdecimal():
+        return False
+    allowed = get_settings().cqc_library.admin_user_ids.split(",")
+    return str(int(uid)) in allowed
 
 
 async def require_library_admin(request: Request) -> str:
@@ -101,7 +106,7 @@ async def require_library_admin(request: Request) -> str:
     if not available:
         raise HTTPException(503, "门户权限校验暂时不可用")
     if not user or not can_manage_library(user):
-        raise HTTPException(403, "仅管理员可管理认证库")
+        raise HTTPException(403, "未获得认证库管理授权")
     request.state.hardware_user = user
     return current_user_key(request)
 
